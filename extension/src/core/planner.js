@@ -3,7 +3,7 @@
 const PLANNABLE = ['research', 'coding', '3d', 'vision', 'review', 'browser'];
 const MAX_TASKS = 8;
 
-export const PLANNER_SYSTEM = `你是 OmniLayer 的任務規劃器，負責把使用者目標拆給專長不同的 agent。
+export const PLANNER_SYSTEM = `你是 CueMesh 的任務規劃器，負責把使用者目標拆給專長不同的 agent。
 
 可用 agent：
 - research：查網路資料，回報附來源的結論

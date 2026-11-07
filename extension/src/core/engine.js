@@ -524,7 +524,7 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
       // 情境中的截圖只留在記憶體，不存進 chrome.storage，避免大量圖片占滿儲存空間
       const storedContext = context.map(({ image, ...rest }) => ({ ...rest, hasImage: Boolean(image) }));
       store.insertRun({
-        id: runId, projectId, goal, status: 'planning', mode, planSummary: '', finalResult: null, error: null,
+        id: runId, projectId, goal, status: 'planning', mode, workflowId: options.workflowId ?? null, maxCostUsd, planSummary: '', finalResult: null, error: null,
         costUsd: 0, inputTokens: 0, outputTokens: 0, createdAt: now, finishedAt: null,
         context: storedContext, tasks: [], artifacts: [], events: [],
       });
