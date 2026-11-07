@@ -429,7 +429,7 @@ export function createEngine({ store, providers, browser, keys = store.keys, mes
     let lastError;
     const badKeyProviders = new Set();
     for (const [attempt, candidate] of candidates.entries()) {
-      // 同一把 API key 已被判定無效時，同一家的其他模型一定也會失敗，不必再試
+      // 同一把 API key 無效或帳戶沒錢時，同一家的其他模型一定也會失敗，不必再試
       if (badKeyProviders.has(candidate.provider)) continue;
       const startedAt = Date.now();
       setTask(s, job.taskId, { status: 'running', provider: candidate.provider, model: candidate.model, startedAt });
@@ -447,7 +447,7 @@ export function createEngine({ store, providers, browser, keys = store.keys, mes
       } catch (err) {
         record(false);
         if (!(err instanceof ProviderError)) throw err;
-        if (err.kind === 'auth') badKeyProviders.add(candidate.provider);
+        if (err.kind === 'auth' || err.kind === 'billing') badKeyProviders.add(candidate.provider);
         lastError = err;
       }
     }

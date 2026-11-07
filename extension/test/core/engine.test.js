@@ -443,3 +443,15 @@ test('裝置清單取得失敗時不影響本機任務；沒有 mesh 時規劃�
   const run = await t.run('做事');
   assert.equal(run.status, 'done');
 });
+
+test('帳戶沒有餘額（402）時不再試同一家的其他模型，直接換下一家', async () => {
+  const t = await setup({
+    keys: ['gemini', 'openai'],
+    gemini: () => new ProviderError('billing', 'gemini：帳戶餘額不足', { provider: 'gemini', status: 402 }),
+    openai: [text('OpenAI 接手')],
+  });
+  const { run } = await t.run('@research 查資料');
+  assert.equal(run.status, 'done');
+  assert.equal(run.tasks[0].provider, 'openai');
+  assert.equal(t.providers.gemini.calls.length, 1);
+});

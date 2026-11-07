@@ -9,7 +9,7 @@
 //   { role: 'assistant', text, toolCalls, raw }   raw 是供應商原始內容，同一供應商續接時必須原樣送回
 //   { role: 'tool', results: [{ id, name, text, image?, isError? }] }
 
-export const PROVIDER_ERROR_KINDS = ['auth', 'rate', 'server', 'network', 'bad_request', 'not_found', 'refusal', 'output_limit'];
+export const PROVIDER_ERROR_KINDS = ['auth', 'rate', 'server', 'network', 'bad_request', 'not_found', 'refusal', 'output_limit', 'billing'];
 
 export class ProviderError extends Error {
   constructor(kind, message, { provider, status } = {}) {
@@ -23,6 +23,7 @@ export class ProviderError extends Error {
 
 const MESSAGES = {
   auth: 'API key 無效或沒有這個模型的權限',
+  billing: '帳戶餘額不足或尚未啟用付費，請到該服務的帳單頁確認',
   rate: '已達速率或額度上限',
   server: '供應商伺服器暫時錯誤',
   network: '無法連線到供應商',
@@ -36,6 +37,7 @@ export function classifyHttpError(provider, err) {
   if (err?.name === 'AbortError' || err?.name === 'APIUserAbortError') return err;
   let kind;
   if (status === 401 || status === 403) kind = 'auth';
+  else if (status === 402) kind = 'billing';
   else if (status === 404) kind = 'not_found';
   else if (status === 408 || status === 409 || status === 429) kind = 'rate';
   else if (typeof status === 'number' && status >= 500) kind = 'server';
