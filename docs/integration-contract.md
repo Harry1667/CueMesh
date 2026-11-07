@@ -1,6 +1,7 @@
-# 擴充功能與網站的對接規格（草案 v0）
+# 擴充功能與網站的對接規格（草案 v1）
 
-> 狀態：連線尚未實作，兩邊先各自開發。網站可以先用本文件的範例資料做畫面，之後再接真實資料。
+> **2026-11-07 更新：帳號改由 `server/` 統一提供，網站不要另外做帳號。** API 見 [`cloud-api.md`](cloud-api.md)。
+> 狀態：伺服器開發中。網站可以先用本文件的範例資料做畫面，之後再接真實資料。
 > 要修改本文件，請先和另一個模組的負責人確認。
 
 ## 一、分工邊界
@@ -9,11 +10,11 @@
 |---|---|---|
 | 執行 agent、呼叫 AI、操作瀏覽器 | 負責 | 不負責 |
 | 使用者的 AI API key | 只存在瀏覽器本機 | **不接收、不儲存** |
-| 帳號、註冊、登入 | 使用網站發的 token | 負責 |
-| 專案清單與進度畫面 | 回報資料 | 負責儲存與顯示 |
+| 帳號、註冊、登入 | 呼叫 `server/` | 呼叫 `server/`，只做畫面 |
+| 專案清單與進度畫面 | 回報資料到 `server/` | 從 `server/` 讀取並顯示 |
 | 批准瀏覽器動作 | 負責 | 只顯示結果 |
 
-資料流向是單向為主：**擴充功能執行工作，並把進度回報給網站顯示。** 網站不會直接控制瀏覽器。
+資料流向：**擴充功能執行工作並回報到 `server/`，網站從 `server/` 讀取並顯示。** 網站不會直接控制瀏覽器。
 
 ## 二、資料模型
 
@@ -106,29 +107,21 @@
 | `usage` | `{ provider, model, input, output, costUsd, totalCostUsd }` | 累計費用 |
 | `artifact` | `{ artifactId, name, kind, createdBy }` | 新增成果檔案 |
 | `notice` | `{ text }` | 一般提示 |
+| `mesh_dispatch` | `{ taskId, device, owner, mine, status, dispatchId?, text? }` | 主 agent 派工給某台裝置 |
+| `mesh_report` | `{ taskId, device, owner, mine, status, text, costUsd }` | 子 agent 回報 |
+| `mesh_question` | `{ taskId, dispatchId, text, direction }` | 子 agent 向主 agent 確認 |
+| `mesh_answer` | `{ taskId, dispatchId, text, direction }` | 主 agent 的回答 |
 | `run_finished` | `{ status, error? }` | 任務結束 |
 
 **隱私：** 事件不包含 API key。`tool_call.args` 可能含使用者輸入的文字或網址，網站只能顯示給該帳號本人。
 
-## 三、之後的連線方式（提案，尚未實作）
+## 三、連線方式
 
-1. 使用者在網站登入後產生一組配對 token，貼到擴充功能設定裡。
-2. 擴充功能用 `Authorization: Bearer <token>` 呼叫網站 API。
-3. 擴充功能批次回報資料：
+見 [`cloud-api.md`](cloud-api.md)。網站用同一套帳號登入，以 Bearer token 呼叫 API；網站的網址要加進伺服器的 `WEBSITE_ORIGINS`，否則瀏覽器會擋下請求。
 
-```text
-PUT  /api/ext/projects/:projectId      建立或更新專案
-PUT  /api/ext/runs/:runId              建立或更新 Run，內容含 tasks
-POST /api/ext/runs/:runId/events       批次上傳事件：{ "events": [Event, ...] }
-PUT  /api/ext/runs/:runId/artifacts/:artifactId   上傳成果檔案
-```
-
-網站要允許這些來源：`Origin: chrome-extension://<擴充功能 ID>`。
-
-**離線：** 網站連不上時，擴充功能照常執行，並在本機排隊，之後補傳。
+**離線：** 伺服器連不上時，擴充功能照常執行，並在本機排隊，之後補傳。
 
 ## 四、尚未決定
 
 - 網站的技術選型與部署位置（由網站負責人決定）
-- 配對 token 的有效期限與撤銷方式
-- 成果檔案與截圖的大小上限
+- token 的有效期限與撤銷方式
