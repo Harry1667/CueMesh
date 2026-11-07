@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, describe } from 'node:test';
 import {
-  applyEvent, applyMention, buildStartOptions, collectSources, createApprovalQueue, createRunView, describeArgs,
+  applyEvent, applyMention, buildStartOptions, collectSources, createApprovalQueue, createRunView, currentStep, describeArgs,
   describeElement, describeUrl, filterMentions, findMentionQuery, formatDuration, formatUsd, imageDataUrl, mergeRun,
   mentionedProviders, moveItem, normalizeRunRow, normalizeStats, parseMaxCost, PROVIDERS, retryContext, safeFilename, startBlocker,
   stripControls, taskProgress, taskTree, validateWorkflow, workflowPayload,
@@ -390,6 +390,25 @@ describe('開始任務的條件', () => {
     assert.deepEqual(buildStartOptions({ mode: 'auto', maxCostUsd: 2 }), { mode: 'auto', maxCostUsd: 2 });
     assert.deepEqual(buildStartOptions({ mode: 'council' }), { mode: 'council' });
     assert.deepEqual(buildStartOptions({ mode: 'workflow', workflowId: 'w1', maxCostUsd: 1 }), { workflowId: 'w1', maxCostUsd: 1 });
+  });
+});
+
+describe('目前步驟摘要', () => {
+  test('依序：規劃、單一任務、多個任務、瀏覽器動作、結束', () => {
+    const v = view();
+    assert.match(currentStep(v), /拆成子任務/);
+    applyEvent(v, ev('task_created', { taskId: 'a', title: '查價格', agent: 'research' }));
+    assert.match(currentStep(v), /準備/);
+    applyEvent(v, ev('task_update', { taskId: 'a', fields: { status: 'running' } }));
+    assert.equal(currentStep(v), '查價格（@research）');
+    applyEvent(v, ev('task_update', { taskId: 'b', fields: { status: 'running', title: '寫程式' } }));
+    assert.match(currentStep(v), /2 個子任務/);
+    applyEvent(v, ev('tool_call', { taskId: 'a', tool: 'browser_navigate', args: { url: 'https://a.com' } }));
+    assert.equal(currentStep(v), '前往網址：https://a.com');
+    v.cancelling = true;
+    assert.match(currentStep(v), /取消/);
+    applyEvent(v, ev('run_finished', { status: 'done' }));
+    assert.equal(currentStep(v), null);
   });
 });
 

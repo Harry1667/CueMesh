@@ -877,3 +877,20 @@ export function createApprovalPolicy(initialMode = 'always') {
     },
   };
 }
+
+// 執行中顯示一行目前步驟，細節收在「詳細過程」裡
+export function currentStep(view) {
+  const { run } = view;
+  if (isFinished(run.status)) return null;
+  if (view.cancelling) return '正在取消…';
+  const pendingBrowser = [...view.browserLog].reverse().find((e) => e.state === 'pending');
+  if (pendingBrowser) {
+    const args = describeArgs(pendingBrowser.tool, pendingBrowser.args);
+    return clip(`${toolLabel(pendingBrowser.tool)}${args ? `：${args}` : ''}`, 80);
+  }
+  const running = [...view.tasks.values()].filter((t) => t.status === 'running');
+  if (running.length === 1) return clip(`${running[0].title}${running[0].agent ? `（@${running[0].agent}）` : ''}`, 80);
+  if (running.length > 1) return `${running.length} 個子任務同時進行：${clip(running[0].title, 40)} 等`;
+  if (view.tasks.size === 0) return '正在把目標拆成子任務…';
+  return '準備下一步…';
+}

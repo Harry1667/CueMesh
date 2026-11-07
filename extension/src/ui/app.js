@@ -6,7 +6,6 @@ import {
   dispatchBlocker, dispatchContext, dispatchTargets, isDispatchOpen, isFinished, mergeDispatches, mergeProjects, mergeRun,
   normalizeRunRow, PROVIDERS, retryContext, RUN_STATUS_LABELS, startBlocker,
 } from './logic.js';
-import { createAccountView } from './view-account.js';
 import { createApprovalDialog } from './view-approval.js';
 import { createConsentDialog } from './view-consent.js';
 import { createHistoryView } from './view-history.js';
@@ -20,7 +19,6 @@ const DEFAULT_SETTINGS = { approvalMode: 'always', maxCostUsd: 2, teamPrefs: {} 
 const NAV = [
   { id: 'task', label: '任務' },
   { id: 'history', label: '歷史' },
-  { id: 'account', label: '帳號' },
   { id: 'settings', label: '設定' },
 ];
 
@@ -50,7 +48,7 @@ export function applyTheme(pref) {
 const errorText = (err) => (err instanceof Error ? err.message : String(err ?? '未知錯誤'));
 
 export function mountApp(root, deps = {}) {
-  const { engine, store, browser, catalog = {}, previewUrl = null, onSettingsChange = null, cloud = null, cloudLoadError = null } = deps;
+  const { engine, store, browser, catalog = {}, previewUrl = null, onSettingsChange = null, cloud = null, cloudLoadError = null, assetBase = 'icons/' } = deps;
   if (!engine || !store || !browser) throw new Error('mountApp 需要 engine、store、browser');
   const approvals = deps.approvals ?? createApprovalQueue();
   const consents = deps.consents ?? createConsentQueue();
@@ -349,7 +347,7 @@ export function mountApp(root, deps = {}) {
         refreshRuns();
         refreshDispatches();
       }
-      if (view === 'account') refreshAllCloud();
+      if (view === 'settings') refreshAllCloud();
       render();
       main.scrollTop = 0;
     },
@@ -816,25 +814,24 @@ export function mountApp(root, deps = {}) {
   }
 
   // ---------- 外殼 ----------
-  const lamps = h('div', { class: 'keylamps', role: 'img' });
+  const NEW_PROJECT = '__new_project__';
   const projectSelect = h('select', {
     id: 'project-select',
     class: 'select select--bare',
     'aria-label': '目前專案',
-    onChange: (e) => actions.selectProject(e.target.value),
-  });
-  const addProjectBtn = h('button', {
-    type: 'button',
-    class: 'iconbtn',
-    'aria-label': '新增專案',
-    title: '新增專案',
-    onClick: () => {
-      S.addingProject = !S.addingProject;
-      S.projectError = null;
-      render();
-      if (S.addingProject) setTimeout(() => projectNameInput.focus(), 30);
+    onChange: (e) => {
+      if (e.target.value === NEW_PROJECT) {
+        // 這不是真的專案，要把選單還原，再打開新增表單
+        e.target.value = S.projectId;
+        S.addingProject = true;
+        S.projectError = null;
+        render();
+        setTimeout(() => projectNameInput.focus(), 30);
+        return;
+      }
+      actions.selectProject(e.target.value);
     },
-  }, '＋');
+  });
   const projectNameInput = h('input', {
     class: 'input',
     type: 'text',
@@ -862,7 +859,7 @@ export function mountApp(root, deps = {}) {
         S.addingProject = false;
         S.projectError = null;
         render();
-        addProjectBtn.focus();
+        projectSelect.focus();
       },
     }, '取消')),
   projectError);
@@ -873,15 +870,15 @@ export function mountApp(root, deps = {}) {
     onClick: () => actions.navigate(item.id),
   }, item.label)]));
 
+  // 只有出問題才顯示狀態，平常不佔頁首
+  const statusLine = h('p', { class: 'masthead__status', role: 'status', hidden: true });
+
   const header = h('header', { class: 'masthead' },
     h('div', { class: 'masthead__top' },
-      h('h1', { class: 'brand' }, sealMark(), h('span', { class: 'brand__name' }, 'CueMesh')),
+      h('h1', { class: 'brand' }, sealMark(assetBase), h('span', { class: 'brand__name' }, 'CueMesh')),
+      h('div', { class: 'masthead__project' }, projectSelect),
       h('nav', { class: 'nav', 'aria-label': '主要頁面' }, [...navButtons.values()])),
-    h('div', { class: 'masthead__project' },
-      h('label', { class: 'masthead__label', for: 'project-select' }, '專案'),
-      projectSelect,
-      addProjectBtn,
-      lamps),
+    statusLine,
     projectForm);
 
   const main = h('main', { class: 'sheet', id: 'main', tabindex: '-1' });
@@ -892,8 +889,7 @@ export function mountApp(root, deps = {}) {
   const runScreen = createRunScreen(ctx);
   const historyView = createHistoryView(ctx);
   const settingsView = createSettingsView(ctx);
-  const accountView = createAccountView(ctx);
-  const views = { task: taskView, run: runScreen, history: historyView, account: accountView, settings: settingsView };
+  const views = { task: taskView, run: runScreen, history: historyView, settings: settingsView };
   for (const view of Object.values(views)) {
     view.el.hidden = true;
     main.appendChild(view.el);
@@ -911,15 +907,10 @@ export function mountApp(root, deps = {}) {
   });
   root.replaceChildren(h('div', { class: 'app' }, header, main, toastEl, live, approvalDialog.el, consentDialog.el));
 
-  function paintLamps() {
-    const connected = connectedProviders(S.keyStatus);
-    lamps.setAttribute('aria-label', connected.length
-      ? `已接上 ${connected.length} 家 AI：${connected.map((id) => PROVIDERS.find((p) => p.id === id).short).join('、')}`
-      : '還沒有接上任何 AI');
-    lamps.replaceChildren(...PROVIDERS.map((p) => h('span', {
-      class: `keylamp${connected.includes(p.id) ? ' is-on' : ''}`,
-      title: `${p.label}：${connected.includes(p.id) ? '已設定' : '未設定'}`,
-    })));
+  function paintStatus() {
+    const offline = S.cloudState.user && S.cloudState.status === 'offline';
+    statusLine.hidden = !offline;
+    statusLine.textContent = offline ? '連不上伺服器，協作暫停；這台的任務不受影響。' : '';
   }
 
   function paintProjects() {
@@ -931,12 +922,11 @@ export function mountApp(root, deps = {}) {
       const shared = S.projects.filter((p) => p.shared || p.remoteOnly);
       projectSelect.replaceChildren(...(shared.length
         ? [h('optgroup', { label: '我的專案' }, mine.map(option)), h('optgroup', { label: '共享與雲端專案' }, shared.map(option))]
-        : mine.map(option)));
+        : mine.map(option)), h('option', { value: NEW_PROJECT }, '＋ 新增專案…'));
       projectSelect.dataset.sig = signature;
     }
     if (S.projectId) projectSelect.value = S.projectId;
     projectForm.hidden = !S.addingProject;
-    addProjectBtn.setAttribute('aria-expanded', String(S.addingProject));
     projectError.hidden = !S.projectError;
     projectError.textContent = S.projectError ?? '';
   }
@@ -961,7 +951,7 @@ export function mountApp(root, deps = {}) {
       );
     }
 
-    paintLamps();
+    paintStatus();
     paintProjects();
 
     // 「執行畫面」屬於任務分頁

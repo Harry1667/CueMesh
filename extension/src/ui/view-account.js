@@ -17,18 +17,22 @@ const showError = (el, message) => {
 };
 
 export function createAccountView({ S, actions, cloud }) {
-  const part = (id, title, description, ...children) => h('section', { class: 'part part--settings', id: `account-${id}`, 'aria-labelledby': `acct-${id}-title` },
-    h('h2', { class: 'part__title', id: `acct-${id}-title` }, title),
+  // 帳號內的小區塊；金鑰與成員預設收合，保持設定頁精簡
+  const block = (id, title, description, ...children) => h('div', { id: `account-${id}` },
+    h('h3', { class: 'subhead' }, title),
+    description && h('p', { class: 'hint' }, description),
+    ...children);
+  const collapsible = (id, title, description, ...children) => h('details', { class: 'sub-section', id: `account-${id}` },
+    h('summary', null, h('span', null, title), icon('chevron', 16)),
     description && h('p', { class: 'hint' }, description),
     ...children);
 
   if (!cloud) {
     return {
-      el: h('div', { class: 'view view--account' },
-        h('h2', { class: 'view-title' }, '帳號'),
-        h('div', { class: 'callout' }, h('span', { class: 'callout__text' }, S.cloudLoadError
-          ? `雲端模組無法載入：${S.cloudLoadError}。任務功能不受影響。`
-          : '這個版本沒有雲端模組。任務功能不受影響。'))),
+      accountEl: h('p', { class: 'muted' }, S.cloudLoadError
+        ? `雲端模組無法載入：${S.cloudLoadError}。任務功能不受影響。`
+        : '這個版本沒有雲端模組。任務功能不受影響。'),
+      vaultEl: null,
       update() {},
     };
   }
@@ -131,12 +135,13 @@ export function createAccountView({ S, actions, cloud }) {
   authSubmit);
 
   const signedOutBox = h('div', null,
-    part('login', '登入後可以做什麼', '派工給其他裝置、和別人共享專案、同步 API key。不登入也能用所有單機功能。', authForm),
-    part('server', '伺服器', null, serverForm));
+    h('p', { class: 'hint', id: 'account-login-note' }, '登入後可以派工給其他裝置、共享專案、同步 API key。不登入也能用所有單機功能。'),
+    h('div', { id: 'account-login' }, authForm),
+    h('div', { id: 'account-server' }, serverForm));
 
   // ---------- 使用者 ----------
   const userBox = h('div', { class: 'account-user' });
-  const logoutBtn = h('button', { type: 'button', class: 'btn btn--quiet btn--small', onClick: () => actions.logout() }, '登出');
+  const logoutBtn = h('button', { type: 'button', class: 'btn btn--small', onClick: () => actions.logout() }, '登出');
 
   // ---------- 裝置 ----------
   const deviceNameInput = h('input', { id: 'device-name', class: 'input', type: 'text', maxlength: '60' });
@@ -369,22 +374,21 @@ export function createAccountView({ S, actions, cloud }) {
   }
 
   const signedInBox = h('div', null,
-    part('user', '登入身分', null, userBox),
-    part('device', '裝置', null, deviceForm,
+    h('div', { id: 'account-user' }, userBox),
+    h('p', { class: 'muted account-server' }, ''),
+    h('div', { id: 'account-device' }, deviceForm,
       h('h3', { class: 'subhead', id: 'accept-title' }, '是否接受派工'),
       h('p', { class: 'hint' }, '接受派工代表別人的 agent 會用這個瀏覽器（看得到你登入的網站）和你的 API key。'),
       acceptBox,
       acceptError,
       h('h3', { class: 'subhead' }, '所有裝置'),
       devicesBox),
-    part('vault', '金鑰同步', '把 API key 用密語加密後存到雲端，換裝置時下載。', vaultWarning, vaultStatusEl, vaultForm),
-    part('members', '專案成員', null, projectName, inviteBox, inviteError, h('h3', { class: 'subhead' }, '成員'), membersBox, memberError, joinForm),
-    part('server-in', '伺服器', null, h('p', { class: 'muted account-server' }, '')));
+    collapsible('members', '專案成員', null, projectName, inviteBox, inviteError, h('h3', { class: 'subhead' }, '成員'), membersBox, memberError, joinForm));
 
-  const el = h('div', { class: 'view view--account' },
-    h('div', { class: 'block-head' }, h('h2', { class: 'view-title' }, '帳號'), statusEl),
-    signedOutBox,
-    signedInBox);
+  // 金鑰同步放在 API key 區段底下，由設定頁決定位置；未登入時不顯示
+  const vaultEl = collapsible('vault', '金鑰同步', '把 API key 用密語加密後存到雲端，換裝置時下載。', vaultWarning, vaultStatusEl, vaultForm);
+
+  const accountEl = h('div', { class: 'view--account' }, statusEl, signedOutBox, signedInBox);
 
   const signatures = new Map();
   const patch = (container, signature, build) => {
@@ -405,6 +409,7 @@ export function createAccountView({ S, actions, cloud }) {
     statusEl.replaceChildren(h('span', { class: 'lamp', 'data-status': info.lamp, 'aria-hidden': 'true' }), h('span', null, info.label));
     signedOutBox.hidden = Boolean(user);
     signedInBox.hidden = !user;
+    vaultEl.hidden = !user;
     if (document.activeElement !== serverInput && (justShown || !serverInput.value)) serverInput.value = S.cloudState.baseUrl ?? '';
 
     if (!user) return;
@@ -433,5 +438,5 @@ export function createAccountView({ S, actions, cloud }) {
     patch(membersBox, JSON.stringify([S.cloudState.members, S.cloudState.membersError, user.id]), buildMembers);
   }
 
-  return { el, update };
+  return { accountEl, vaultEl, update };
 }

@@ -3,7 +3,7 @@
 import { h, icon, replaceKeepingFocus } from './dom.js';
 import { renderMarkdown } from './markdown.js';
 import {
-  AGENT_LABELS, collectSources, describeArgs, deviceLabel, dispatchStatus, formatDuration, formatUsd, hostOf, isFinished,
+  AGENT_LABELS, collectSources, describeArgs, deviceLabel, dispatchStatus, currentStep, formatDuration, formatUsd, hostOf, isFinished,
   meshOwner, RUN_STATUS_LABELS, safeFilename, stripControls, TASK_STATUS_LABELS, taskProgress, taskTree, toolLabel, clip,
 } from './logic.js';
 
@@ -38,17 +38,25 @@ export function createRunScreen({ S, actions, previewUrl }) {
 
   const cancelBtn = h('button', {
     type: 'button',
-    class: 'btn btn--danger btn--block',
+    id: 'run-cancel',
+    class: 'btn btn--danger btn--small',
     onClick: () => S.shownRunId && actions.cancel(S.shownRunId),
   }, '取消任務');
-  const footer = h('div', { class: 'run__footer', hidden: true }, cancelBtn);
-
+  const statusEl = h('div');
   const backBtn = h('button', { type: 'button', class: 'linkbtn', onClick: actions.newTask }, icon('back', 14), '新任務');
+  const stepEl = h('p', { class: 'run__step', role: 'status', hidden: true });
+
+  // 詳細過程：費用、計畫、子任務、動態、瀏覽器動作，預設收合
+  const detailsMeta = h('span', { class: 'details-root__meta' });
+  const detailsEl = h('details', { class: 'details-root' },
+    h('summary', { 'data-fk': 'details-root' }, '詳細過程', detailsMeta, icon('chevron', 16)),
+    h('div', { class: 'details-root__body' }, planEl, costEl, tasksEl, feedEl, browserEl));
+
   const el = h('div', { class: 'view view--run' },
-    h('div', { class: 'run__nav' }, backBtn, clockEl),
+    h('div', { class: 'run__bar' }, statusEl, h('div', { class: 'run__bar-end' }, clockEl, cancelBtn, backBtn)),
     header,
-    body,
-    footer);
+    stepEl,
+    body);
 
   const signatures = new Map();
   function patch(container, signature, build) {
@@ -75,10 +83,10 @@ export function createRunScreen({ S, actions, previewUrl }) {
     const { run } = view;
     const status = view.cancelling ? 'cancelling' : run.status;
     const label = view.cancelling ? '取消中' : RUN_STATUS_LABELS[run.status] ?? run.status;
+    replaceKeepingFocus(statusEl, [h('p', { class: 'run__status', 'data-status': status },
+      h('span', { class: 'lamp', 'data-status': lampFor(status), 'aria-hidden': 'true' }),
+      h('span', null, label))]);
     return h('header', { class: 'run__head' },
-      h('p', { class: 'run__status', 'data-status': status },
-        h('span', { class: 'lamp', 'data-status': lampFor(status), 'aria-hidden': 'true' }),
-        h('span', null, label)),
       h('h2', { class: 'run__goal' }, run.goal || '（沒有目標文字）'),
       view.context?.length
         ? h('p', { class: 'run__context' }, `附加了 ${view.context.length} 項情境`)
@@ -130,7 +138,7 @@ export function createRunScreen({ S, actions, previewUrl }) {
     if (!summary && !isFinished(view.run.status)) {
       return h('section', { class: 'plan plan--waiting' },
         h('h3', { class: 'block-title' }, '計畫'),
-        h('p', { class: 'muted' }, '正在把目標拆成子任務…'));
+        h('p', { class: 'muted' }, '規劃中'));
     }
     if (!summary) return null;
     return h('section', { class: 'plan', 'aria-labelledby': 'plan-title' },
@@ -470,9 +478,11 @@ export function createRunScreen({ S, actions, previewUrl }) {
     if (!view) {
       header.replaceChildren(h('p', { class: 'muted' }, '正在讀取任務…'));
       body.replaceChildren();
+      statusEl.replaceChildren();
       signatures.clear();
       lastOrder = null;
-      footer.hidden = true;
+      cancelBtn.hidden = true;
+      stepEl.hidden = true;
       return;
     }
 
@@ -495,17 +505,22 @@ export function createRunScreen({ S, actions, previewUrl }) {
     patch(resultEl, JSON.stringify([run.status, run.finalResult, run.error, [...view.tasks.values()].map((t) => [t.status, t.sources.length])]), () => buildResult(view));
     patch(artifactsEl, JSON.stringify(view.artifacts.map((a) => [a.id, a.name, a.kind, a.createdBy, a.content?.length ?? null, S.openPreviews.has(a.id ?? a.name)])), () => buildArtifacts(view));
 
-    // 進行中先看進度；結束後把結果放最前面，不必往下捲才看得到答案
-    const order = finished
-      ? [resultEl, artifactsEl, meshEl, costEl, planEl, tasksEl, feedEl, browserEl]
-      : [planEl, meshEl, costEl, tasksEl, feedEl, browserEl, resultEl, artifactsEl];
+    // 進行中先看協作與目前步驟；結束後把結果放最前面。其餘都在「詳細過程」裡
+    const order = finished ? [resultEl, artifactsEl, meshEl, detailsEl] : [meshEl, artifactsEl, detailsEl];
     const orderKey = finished ? 'finished' : 'running';
     if (orderKey !== lastOrder) {
       body.replaceChildren(...order);
       lastOrder = orderKey;
     }
 
-    footer.hidden = finished;
+    const step = currentStep(view);
+    stepEl.hidden = !step;
+    stepEl.textContent = step ? `目前：${step}` : '';
+    const { total, done } = taskProgress(view);
+    detailsMeta.textContent = [total ? `${done}／${total} 完成` : null, formatUsd(run.costUsd ?? 0)].filter(Boolean).join('，');
+
+    cancelBtn.hidden = finished;
+    backBtn.hidden = !finished;
     cancelBtn.disabled = view.cancelling;
     cancelBtn.textContent = view.cancelling ? '取消中…' : '取消任務';
     tick();

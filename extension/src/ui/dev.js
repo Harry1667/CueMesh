@@ -720,9 +720,9 @@ const STATES = {
   'load-error': { label: '載入失敗', keys: {}, breakStore: true },
   'real-engine': { label: '真實引擎 + 假 AI', realEngine: true, goal: DEMO_GOAL },
   'real-cloud': { label: '真實伺服器（要帶 server 參數）', realEngine: true, goal: DEMO_GOAL },
-  'account-out': { label: '帳號：未登入', keys: ONE_KEY, view: 'account', cloud: { signedIn: false } },
-  'account-in': { label: '帳號：已登入', keys: ONE_KEY, view: 'account', cloud: {} },
-  'account-offline': { label: '帳號：連不上伺服器', keys: ONE_KEY, view: 'account', cloud: { status: 'offline', offlineLoad: true } },
+  'account-out': { label: '帳號：未登入', keys: ONE_KEY, view: 'settings', cloud: { signedIn: false } },
+  'account-in': { label: '帳號：已登入', keys: ONE_KEY, view: 'settings', cloud: {} },
+  'account-offline': { label: '帳號：連不上伺服器', keys: ONE_KEY, view: 'settings', cloud: { status: 'offline', offlineLoad: true } },
   'task-remote': { label: '任務頁：派工到其他裝置', keys: {}, cloud: {}, goal: DEMO_GOAL, withContext: true, runTarget: 'dev-amy' },
   'task-signed-out': { label: '任務頁：未登入', keys: ONE_KEY, cloud: { signedIn: false }, goal: DEMO_GOAL },
   dispatches: { label: '派工清單', keys: ONE_KEY, view: 'history', history: true, cloud: {} },
@@ -796,6 +796,7 @@ async function boot() {
 
   const app = mountApp(document.getElementById('app'), {
     engine, store, browser, approvals, consents, cloud,
+    assetBase: '/public/icons/', // 打包後在 icons/，開發時直接讀 public/
     catalog: { AGENT_TYPES, MODELS, ROUTES },
     previewUrl: null, // 一般網頁沒有擴充功能的安全政策，srcdoc 可以直接執行
   });
@@ -813,9 +814,8 @@ async function boot() {
   if (config.view) app.navigate(config.view);
   if (config.runTarget) {
     await sleep(60);
-    const select = document.getElementById('run-target');
-    select.value = config.runTarget;
-    select.dispatchEvent(new Event('change', { bubbles: true }));
+    document.getElementById('device-btn').click();
+    document.querySelector(`[data-device="${config.runTarget}"]`).click();
   }
   for (const kind of config.consent ?? []) {
     window.__dev.lastConsent = consents.request(kind === 'cross' ? CONSENT_CROSS : CONSENT_SAME);

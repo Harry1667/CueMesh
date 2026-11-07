@@ -1,41 +1,38 @@
-// 任務頁：目標輸入、@ 自動完成、情境附加、模式切換、開始／取消。第一次使用時先引導設定 API key。
-import { h, icon } from './dom.js';
+// 任務頁：只留一個輸入區，其餘功能收進三個小選單。
+import { createMenu, h, icon, menuItem } from './dom.js';
 import {
-  applyMention, CONTEXT_KINDS, connectedProviders, filterMentions, findMentionQuery, formatUsd, hostOf, imageDataUrl,
-  PROVIDERS, clip, dispatchContext, dispatchTargets, isDispatchOpen, targetLabel,
+  applyMention, CONTEXT_KINDS, connectedProviders, dispatchContext, dispatchTargets, filterMentions, findMentionQuery,
+  hostOf, imageDataUrl, clip, targetLabel, deviceLabel,
 } from './logic.js';
 
 const MODES = [
-  { id: 'auto', label: '自動', hint: '由 AI 拆解工作，分給最適合的 agent。' },
-  { id: 'council', label: 'AI 議會', hint: 'Claude 與 OpenAI 各自作答，再整理共識與分歧。需要兩家的 API key。' },
-  { id: 'workflow', label: '工作流', hint: '照你存好的固定步驟執行。' },
+  { id: 'auto', label: '自動', hint: '由 AI 拆解工作，分給最適合的 agent' },
+  { id: 'council', label: 'AI 議會', hint: 'Claude 與 OpenAI 各自作答再比較，需要兩家的 key' },
+  { id: 'workflow', label: '工作流', hint: '照你存好的固定步驟執行' },
 ];
 const CONTEXT_ICONS = { selection: 'selection', region: 'region', element: 'element', page: 'page' };
 const CONTEXT_LABELS = Object.fromEntries(CONTEXT_KINDS.map((c) => [c.kind, c.label]));
+const EXAMPLES = ['摘要我正在看的這個頁面', '比較這三個產品的價格，整理成表格', '@coding 做一個可以互動的待辦清單網頁'];
+const MAX_GOAL_HEIGHT = 240;
 
 export function createTaskView({ S, actions, getBlocker, cloud }) {
-  // ---------- 引導 ----------
-  const guideLamps = h('ul', { class: 'guide__lamps' });
-  const guide = h('section', { class: 'guide', 'aria-labelledby': 'guide-title', hidden: true },
-    h('p', { class: 'guide__kicker' }, '開工前的第一步'),
-    h('h2', { class: 'guide__title', id: 'guide-title' }, '先點亮一盞燈'),
-    h('p', { class: 'guide__text' }, 'CueMesh 用你自己的 API key 呼叫 AI。每接上一家就亮一盞燈，至少要一盞才能開工。'),
-    guideLamps,
-    h('button', {
-      type: 'button',
-      class: 'btn btn--primary btn--block',
-      onClick: () => actions.openSettings('keys'),
-    }, icon('key'), '設定 API key'),
-    h('p', { class: 'guide__note' }, 'key 只存在這個瀏覽器，不會傳給 CueMesh 網站。費用由各家 AI 依用量向你收取。'),
-    cloud && h('button', { type: 'button', class: 'linkbtn guide__alt', onClick: () => actions.navigate('account') }, '已經在其他裝置設定過？登入後用金鑰同步下載'));
+  // ---------- 狀態提示 ----------
+  const keyNotice = h('p', { class: 'notice', hidden: true },
+    h('span', null, '還沒設定 API key。'),
+    h('button', { type: 'button', class: 'linkbtn', onClick: () => actions.openSettings('keys') }, '前往設定'));
 
-  // ---------- 執行中提示 ----------
-  const activeBanner = h('div', { class: 'callout callout--live', hidden: true },
+  const activeCancel = h('button', {
+    type: 'button',
+    class: 'btn btn--danger btn--small',
+    onClick: () => S.activeRunId && actions.cancel(S.activeRunId),
+  }, '取消任務');
+  const activeBanner = h('div', { class: 'notice notice--live', hidden: true },
     h('span', { class: 'lamp', 'data-status': 'running', 'aria-hidden': 'true' }),
-    h('span', { class: 'callout__text' }, '有任務正在執行'),
-    h('button', { type: 'button', class: 'btn btn--ink btn--small', onClick: actions.showActiveRun }, '查看'));
+    h('span', { class: 'notice__text' }, '有任務正在執行'),
+    h('button', { type: 'button', class: 'btn btn--small', onClick: actions.showActiveRun }, '查看'),
+    activeCancel);
 
-  // ---------- 目標與 @ 自動完成 ----------
+  // ---------- 輸入框與 @ 自動完成 ----------
   const listId = 'mention-list';
   let matches = [];
   let activeIndex = 0;
@@ -44,24 +41,32 @@ export function createTaskView({ S, actions, getBlocker, cloud }) {
   const mentionList = h('ul', { class: 'mentions', id: listId, role: 'listbox', 'aria-label': '可指定的 agent 與 AI', hidden: true });
   const goalInput = h('textarea', {
     id: 'goal',
-    class: 'goal',
-    rows: '4',
+    class: 'composer__input',
+    rows: '2',
     maxlength: '20000',
-    placeholder: '例如：比較這三個產品的價格，整理成表格',
+    placeholder: '要 CueMesh 做什麼？輸入 @ 可指定 agent',
+    'aria-label': '要 CueMesh 做什麼？輸入 @ 可指定 agent 或 AI，按 Ctrl 或 ⌘ 加 Enter 開始',
     role: 'combobox',
     'aria-autocomplete': 'list',
     'aria-controls': listId,
     'aria-expanded': 'false',
-    'aria-describedby': 'goal-help',
     spellcheck: 'false',
     onInput: () => {
       actions.setGoal(goalInput.value);
+      autoGrow();
       refreshMentions();
     },
     onKeydown: onGoalKey,
     onClick: refreshMentions,
     onBlur: () => setTimeout(closeMentions, 120),
   });
+
+  function autoGrow() {
+    goalInput.style.height = 'auto';
+    const next = Math.min(goalInput.scrollHeight, MAX_GOAL_HEIGHT);
+    goalInput.style.height = `${next}px`;
+    goalInput.style.overflowY = goalInput.scrollHeight > MAX_GOAL_HEIGHT ? 'auto' : 'hidden';
+  }
 
   function refreshMentions() {
     const found = findMentionQuery(goalInput.value, goalInput.selectionStart);
@@ -154,13 +159,32 @@ export function createTaskView({ S, actions, getBlocker, cloud }) {
     }
   }
 
-  // ---------- 情境 ----------
-  const contextButtons = new Map(CONTEXT_KINDS.map((meta) => [meta.kind, h('button', {
+  // ---------- 開始 ----------
+  const sendBtn = h('button', {
     type: 'button',
-    class: 'ctxbtn',
-    title: meta.hint,
-    onClick: () => actions.addContext(meta.kind, meta),
-  }, icon(CONTEXT_ICONS[meta.kind]), h('span', null, meta.label))]));
+    class: 'send',
+    'aria-label': '開始',
+    title: '開始',
+    onClick: actions.start,
+  }, icon('up', 18));
+
+  // ---------- 附加情境 ----------
+  const attachMenu = createMenu({
+    id: 'attach-menu',
+    buttonId: 'attach-btn',
+    label: '附加情境',
+    leading: icon('plus', 15),
+    renderItems: (close) => CONTEXT_KINDS.map((meta) => menuItem({
+      label: meta.label,
+      hint: meta.hint,
+      leading: icon(CONTEXT_ICONS[meta.kind], 16),
+      data: { 'data-context': meta.kind },
+      onSelect: () => {
+        close(true);
+        actions.addContext(meta.kind, meta);
+      },
+    })),
+  });
   const contextNote = h('p', { class: 'ctx-note', hidden: true });
   const chips = h('ul', { class: 'chips', 'aria-label': '已附加的情境', hidden: true });
 
@@ -184,145 +208,148 @@ export function createTaskView({ S, actions, getBlocker, cloud }) {
   }
 
   // ---------- 模式 ----------
-  const modeInputs = new Map();
-  const modeGroup = h('div', { class: 'modes', role: 'radiogroup', 'aria-labelledby': 'mode-title' },
-    MODES.map((mode) => {
-      const input = h('input', {
-        type: 'radio',
-        name: 'mode',
-        value: mode.id,
-        class: 'modes__input',
-        onChange: () => actions.setMode(mode.id),
-      });
-      modeInputs.set(mode.id, input);
-      return h('label', { class: 'modes__item' }, input, h('span', { class: 'modes__label' }, mode.label));
-    }));
-  const modeHint = h('p', { class: 'hint', id: 'mode-hint' });
+  const modeMenu = createMenu({
+    id: 'mode-menu',
+    buttonId: 'mode-btn',
+    label: '執行方式',
+    renderItems: (close) => MODES.map((mode) => menuItem({
+      label: mode.label,
+      hint: mode.hint,
+      checked: S.mode === mode.id,
+      data: { 'data-mode': mode.id },
+      onSelect: () => {
+        close(true);
+        actions.setMode(mode.id);
+      },
+    })),
+  });
   const workflowSelect = h('select', {
-    class: 'select',
+    class: 'select select--small',
     'aria-label': '要執行的工作流',
     onChange: (e) => actions.setWorkflow(e.target.value),
   });
-  const workflowRow = h('div', { class: 'workflow-pick', hidden: true }, workflowSelect);
-  const workflowEmpty = h('button', {
-    type: 'button',
-    class: 'btn btn--quiet btn--small',
-    hidden: true,
-    onClick: () => actions.openSettings('workflows'),
-  }, '到設定頁建立工作流');
+  const workflowEmpty = h('button', { type: 'button', class: 'linkbtn', hidden: true, onClick: () => actions.openSettings('workflows') }, '到設定頁建立工作流');
+  const workflowRow = h('div', { class: 'composer__extra', hidden: true }, workflowSelect, workflowEmpty);
 
-  // ---------- 在哪裡執行 ----------
-  const targetSelect = h('select', {
-    id: 'run-target',
-    class: 'select',
-    onChange: (e) => actions.setRunTarget(e.target.value),
+  // ---------- 執行裝置 ----------
+  const deviceMenu = createMenu({
+    id: 'device-menu',
+    buttonId: 'device-btn',
+    label: '執行裝置',
+    align: 'end',
+    renderItems: (close) => {
+      const { user, device, devices } = S.cloudState;
+      const targets = user ? dispatchTargets(devices, device?.id) : [];
+      const pick = (value) => () => {
+        close(true);
+        actions.setRunTarget(value);
+      };
+      const item = (d) => menuItem({
+        label: targetLabel(d),
+        checked: S.runTarget === d.id,
+        data: { 'data-device': d.id },
+        onSelect: pick(d.id),
+      });
+      const mine = targets.filter((d) => d.mine);
+      const others = targets.filter((d) => !d.mine);
+      return [
+        menuItem({ label: '這台裝置', checked: S.runTarget === 'local', data: { 'data-device': 'local' }, onSelect: pick('local') }),
+        mine.length ? [h('p', { class: 'menu__group' }, '我的其他裝置'), mine.map(item)] : null,
+        others.length ? [h('p', { class: 'menu__group' }, '其他帳號的裝置'), others.map(item)] : null,
+        !cloud ? h('p', { class: 'menu__note' }, '這個版本沒有雲端模組，任務會在這台執行。') : null,
+        cloud && !user ? [
+          h('p', { class: 'menu__note' }, '登入後可以把任務派給其他裝置。'),
+          menuItem({
+            label: '前往登入',
+            data: { 'data-login': 'true' },
+            onSelect: () => {
+              close();
+              actions.openSettings('account');
+            },
+          }),
+        ] : null,
+        cloud && user && targets.length === 0 ? h('p', { class: 'menu__note' }, '目前沒有其他線上且接受派工的裝置。') : null,
+      ];
+    },
   });
-  const targetHint = h('p', { class: 'hint', id: 'run-target-hint' });
-  const targetLogin = h('button', { type: 'button', class: 'linkbtn', hidden: true, onClick: () => actions.navigate('account') }, '前往登入');
-  let lastTargetSig = null;
+  const targetHint = h('p', { class: 'composer__hint', id: 'run-target-hint', hidden: true });
 
   function paintTarget() {
     const { user, device, devices } = S.cloudState;
     const targets = user ? dispatchTargets(devices, device?.id) : [];
-    const stale = S.runTarget !== 'local' && !targets.some((d) => d.id === S.runTarget);
-    const sig = JSON.stringify([targets.map((d) => [d.id, d.name, d.ownerName, d.mine, d.acceptRemote]), stale ? S.runTarget : null]);
-    if (sig !== lastTargetSig) {
-      lastTargetSig = sig;
-      const mine = targets.filter((d) => d.mine);
-      const others = targets.filter((d) => !d.mine);
-      const option = (d) => h('option', { value: d.id }, targetLabel(d));
-      targetSelect.replaceChildren(
-        h('option', { value: 'local' }, '這台裝置'),
-        ...(mine.length ? [h('optgroup', { label: '我的其他裝置' }, mine.map(option))] : []),
-        ...(others.length ? [h('optgroup', { label: '其他帳號的裝置' }, others.map(option))] : []),
-        // 選的裝置離線了：留著顯示並擋下開始，不可默默改在這台執行
-        ...(stale ? [h('option', { value: S.runTarget, disabled: true }, '已離線的裝置')] : []),
-      );
-    }
-    targetSelect.value = S.runTarget;
-    targetSelect.disabled = !user && S.runTarget === 'local';
-    targetLogin.hidden = Boolean(user) || !cloud;
-
     const selected = targets.find((d) => d.id === S.runTarget);
-    if (!cloud) targetHint.textContent = '這個版本沒有雲端模組，任務會在這台執行。';
-    else if (!user) targetHint.textContent = '任務會在這台執行。登入後可以派給其他裝置。';
-    else if (S.runTarget === 'local') targetHint.textContent = targets.length ? '用這台的瀏覽器與 API key。' : '目前沒有其他線上且接受派工的裝置。';
-    else if (selected?.mine) targetHint.textContent = '用那台裝置的瀏覽器與 API key 執行，結果會回報到歷史頁。';
-    else if (selected) targetHint.textContent = `會用 ${selected.ownerName ?? '對方'} 的瀏覽器與 API key 執行，對方同意後才會開始。你的目標與文字情境會傳給對方。`;
-    else targetHint.textContent = '';
+    const known = devices.find((d) => d.id === S.runTarget);
+    deviceMenu.setText(S.runTarget === 'local' ? '這台裝置' : deviceLabel(selected ?? known) ?? '已離線的裝置');
 
+    // 只有派到別台時才說明：用的是對方的瀏覽器與 key，這件事不能藏起來
+    let hint = '';
+    if (selected?.mine) hint = '用那台裝置的瀏覽器與 API key 執行，結果會回報到歷史頁。';
+    else if (selected) hint = `會用 ${selected.ownerName ?? '對方'} 的瀏覽器與 API key 執行，對方同意後才開始。你的目標與文字情境會傳給對方。`;
     const { droppedImages } = dispatchContext(S.context);
-    if (S.runTarget !== 'local' && droppedImages) targetHint.textContent += `截圖不會傳送（${droppedImages} 張）。`;
+    if (S.runTarget !== 'local' && droppedImages) hint += `截圖不會傳送（${droppedImages} 張）。`;
+    targetHint.hidden = !hint;
+    targetHint.textContent = hint;
   }
 
-  // ---------- 開始與取消 ----------
-  const startLabel = h('span', null, '開始');
-  const startBtn = h('button', {
-    type: 'button',
-    class: 'btn btn--primary btn--cue',
-    onClick: actions.start,
-  }, h('span', { class: 'lamp lamp--button', 'aria-hidden': 'true' }), startLabel);
-  const cancelBtn = h('button', {
-    type: 'button',
-    class: 'btn btn--danger',
-    hidden: true,
-    onClick: () => S.activeRunId && actions.cancel(S.activeRunId),
-  }, '取消任務');
-  const blockerEl = h('p', { class: 'hint hint--blocker', id: 'start-blocker' });
-  const startError = h('p', { class: 'field-error', role: 'alert', hidden: true });
-  const summary = h('p', { class: 'cue-summary' });
+  // ---------- 範例 ----------
+  const examples = h('div', { class: 'examples', hidden: true },
+    EXAMPLES.map((text) => h('button', {
+      type: 'button',
+      class: 'example',
+      onClick: () => {
+        goalInput.value = text;
+        actions.setGoal(text);
+        autoGrow();
+        goalInput.focus();
+      },
+    }, text)));
 
-  const section = (no, titleId, title, ...children) => h('section', { class: 'part', 'aria-labelledby': titleId },
-    h('span', { class: 'part__no', 'aria-hidden': 'true' }, no),
-    h('h2', { class: 'part__title', id: titleId }, title),
-    ...children);
+  const blockerEl = h('p', { class: 'composer__hint composer__hint--warn', id: 'start-blocker', hidden: true });
+  const startError = h('p', { class: 'field-error', role: 'alert', hidden: true });
 
   const el = h('div', { class: 'view view--task' },
-    guide,
+    keyNotice,
     activeBanner,
-    section('一', 'goal-title', h('label', { for: 'goal' }, '這次要做什麼'),
-      h('div', { class: 'goal-wrap' }, goalInput, mentionList),
-      h('p', { class: 'hint', id: 'goal-help' }, '輸入 @ 指定 agent 或 AI。按 Ctrl 或 ⌘ 加 Enter 開始。')),
-    section('二', 'ctx-title', '指給 AI 看',
-      h('div', { class: 'ctxgrid' }, [...contextButtons.values()]),
+    h('div', { class: 'composer' },
+      h('div', { class: 'composer__box' },
+        goalInput,
+        h('div', { class: 'composer__send' }, sendBtn),
+        mentionList),
+      chips,
       contextNote,
-      chips),
-    section('三', 'mode-title', '怎麼做',
-      modeGroup,
-      modeHint,
+      h('div', { class: 'composer__controls' }, attachMenu.el, modeMenu.el, deviceMenu.el),
       workflowRow,
-      workflowEmpty),
-    section('四', 'target-title', h('label', { for: 'run-target' }, '在哪裡執行'),
-      targetSelect,
       targetHint,
-      targetLogin),
-    h('div', { class: 'cue-bar' },
       blockerEl,
-      startError,
-      h('div', { class: 'cue-bar__actions' }, startBtn, cancelBtn),
-      summary));
+      startError),
+    examples);
+
+  // 第一次顯示前也要有名稱，輔助工具才讀得到
+  attachMenu.setText('附加');
+  modeMenu.setText('自動');
+  deviceMenu.setText('這台裝置');
 
   let lastChipSig = null;
   let lastWorkflowSig = null;
 
-  function update() {
+  function update(justShown) {
     const connected = connectedProviders(S.keyStatus);
-    // 派工用的是對方的 key，這台沒有 key 也能做，不用引導卡佔住畫面
-    guide.hidden = connected.length > 0 || S.runTarget !== 'local';
-    guideLamps.replaceChildren(...PROVIDERS.map((p) => h('li', { class: 'guide__lamp' },
-      h('span', { class: 'lamp', 'data-status': 'pending', 'aria-hidden': 'true' }),
-      p.label)));
-
+    const remote = S.runTarget !== 'local';
+    keyNotice.hidden = connected.length > 0 || remote;
     activeBanner.hidden = !S.activeRunId;
+    const activeView = S.activeRunId ? S.runViews.get(S.activeRunId) : null;
+    activeCancel.disabled = Boolean(activeView?.cancelling);
+    activeCancel.textContent = activeView?.cancelling ? '取消中…' : '取消任務';
 
-    if (goalInput.value !== S.goal) goalInput.value = S.goal;
-
-    for (const [kind, button] of contextButtons) {
-      button.disabled = Boolean(S.capturing);
-      button.classList.toggle('is-busy', S.capturing === kind);
-      if (S.capturing === kind) button.setAttribute('aria-busy', 'true');
-      else button.removeAttribute('aria-busy');
+    if (goalInput.value !== S.goal) {
+      goalInput.value = S.goal;
+      autoGrow();
     }
+    if (justShown) autoGrow();
+
+    attachMenu.setText(S.capturing ? '擷取中' : '附加');
+    attachMenu.button.disabled = Boolean(S.capturing);
+    if (S.capturing) attachMenu.close();
     contextNote.hidden = !S.captureNote;
     if (S.captureNote) {
       contextNote.textContent = S.captureNote.text;
@@ -337,18 +364,15 @@ export function createTaskView({ S, actions, getBlocker, cloud }) {
       chips.replaceChildren(...S.context.map(chipFor));
       chips.hidden = S.context.length === 0;
       lastChipSig = chipSig;
-      // 移除標籤後，焦點移到下一個標籤；都沒了就回到情境按鈕
-      if (focusedChip || !document.activeElement || document.activeElement === document.body) {
-        const next = chips.querySelector('.chip__x');
-        if (focusedChip) (next ?? contextButtons.get('selection')).focus();
-      }
+      // 移除標籤後，焦點移到下一個標籤；都沒了就回到附加按鈕
+      if (focusedChip) (chips.querySelector('.chip__x') ?? attachMenu.button).focus();
     }
 
-    for (const [id, input] of modeInputs) input.checked = id === S.mode;
-    modeHint.textContent = MODES.find((m) => m.id === S.mode)?.hint ?? '';
+    modeMenu.setText(MODES.find((m) => m.id === S.mode)?.label ?? '自動');
     const isWorkflow = S.mode === 'workflow';
-    workflowRow.hidden = !isWorkflow || S.workflows.length === 0;
-    workflowEmpty.hidden = !isWorkflow || S.workflows.length > 0;
+    workflowRow.hidden = !isWorkflow;
+    workflowSelect.hidden = S.workflows.length === 0;
+    workflowEmpty.hidden = S.workflows.length > 0;
     const workflowSig = JSON.stringify(S.workflows.map((w) => [w.id, w.name]));
     if (workflowSig !== lastWorkflowSig) {
       workflowSelect.replaceChildren(...S.workflows.map((w) => h('option', { value: w.id }, w.name)));
@@ -357,27 +381,22 @@ export function createTaskView({ S, actions, getBlocker, cloud }) {
     if (S.workflowId) workflowSelect.value = S.workflowId;
 
     paintTarget();
-    const remote = S.runTarget !== 'local';
     const blocker = getBlocker();
-    startBtn.disabled = Boolean(blocker) || S.starting;
-    startBtn.classList.toggle('is-ready', !blocker && !S.starting);
-    startLabel.textContent = S.starting ? '啟動中…' : remote ? '派工' : '開始';
-    if (blocker) startBtn.setAttribute('aria-describedby', 'start-blocker');
-    else startBtn.removeAttribute('aria-describedby');
-    blockerEl.textContent = blocker ?? '';
-    blockerEl.hidden = !blocker;
-    cancelBtn.hidden = !S.activeRunId;
-    const activeView = S.activeRunId ? S.runViews.get(S.activeRunId) : null;
-    cancelBtn.disabled = Boolean(activeView?.cancelling);
-    cancelBtn.textContent = activeView?.cancelling ? '取消中…' : '取消任務';
+    sendBtn.disabled = Boolean(blocker) || S.starting;
+    const sendLabel = S.starting ? '啟動中' : remote ? '派工' : '開始';
+    sendBtn.setAttribute('aria-label', sendLabel);
+    sendBtn.title = sendLabel;
+    // 空白目標與沒有 key 已經看得出來，其他原因才需要說明
+    const hasGoal = Boolean(S.goal.trim());
+    const showBlocker = Boolean(blocker) && (hasGoal || isWorkflow || S.mode === 'council') && !S.activeRunId && !(connected.length === 0 && !remote);
+    blockerEl.hidden = !showBlocker;
+    blockerEl.textContent = showBlocker ? blocker : '';
+    if (showBlocker) sendBtn.setAttribute('aria-describedby', 'start-blocker');
+    else sendBtn.removeAttribute('aria-describedby');
     startError.hidden = !S.startError;
     startError.textContent = S.startError ?? '';
 
-    const approvalText = S.settings.approvalMode === 'risky' ? '只問高風險動作' : '每個動作都先問你';
-    const openCount = S.cloudState.dispatches.filter((d) => isDispatchOpen(d.status)).length;
-    summary.textContent = remote
-      ? `要求預算上限 ${formatUsd(S.settings.maxCostUsd)}，瀏覽器動作由執行的裝置批准。`
-      : `預算上限 ${formatUsd(S.settings.maxCostUsd)}，瀏覽器動作${approvalText}。${openCount ? `有 ${openCount} 筆派工進行中，見歷史頁。` : ''}`;
+    examples.hidden = !(S.runs.length === 0 && !S.goal && S.context.length === 0 && !S.activeRunId);
   }
 
   return {
@@ -385,9 +404,11 @@ export function createTaskView({ S, actions, getBlocker, cloud }) {
     update,
     setGoal(goal) {
       goalInput.value = goal;
+      autoGrow();
     },
     clearGoal() {
       goalInput.value = '';
+      autoGrow();
       closeMentions();
     },
     focusGoal() {
