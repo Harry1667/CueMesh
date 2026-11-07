@@ -1,0 +1,16 @@
+services:
+  api:
+    build: .
+    env_file:
+      - .env
+    environment:
+      PORT: 3000
+      DATABASE_PATH: /data/cuemesh.sqlite
+    ports:
+      - "127.0.0.1:${HOST_PORT:-3000}:3000"
+    volumes:
+      - cuemesh-data:/data
+    restart: unless-stopped
+
+volumes:
+  cuemesh-data:
