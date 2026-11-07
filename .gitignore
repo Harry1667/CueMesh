@@ -19,3 +19,6 @@ build/
 
 # 分工交接暫存
 extension/.handoff/
+
+# 伺服器資料
+server/data/

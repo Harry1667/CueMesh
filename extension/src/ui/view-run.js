@@ -3,8 +3,8 @@
 import { h, icon, replaceKeepingFocus } from './dom.js';
 import { renderMarkdown } from './markdown.js';
 import {
-  AGENT_LABELS, collectSources, describeArgs, formatDuration, formatUsd, hostOf, isFinished, RUN_STATUS_LABELS,
-  safeFilename, TASK_STATUS_LABELS, taskProgress, taskTree, toolLabel, clip,
+  AGENT_LABELS, collectSources, describeArgs, deviceLabel, dispatchStatus, currentStep, formatDuration, formatUsd, hostOf, isFinished,
+  meshOwner, RUN_STATUS_LABELS, safeFilename, stripControls, TASK_STATUS_LABELS, taskProgress, taskTree, toolLabel, clip,
 } from './logic.js';
 
 const LOG_STATE = {
@@ -14,7 +14,7 @@ const LOG_STATE = {
   error: { label: '失敗', mark: '!' },
   abandoned: { label: '未完成', mark: '–' },
 };
-const FALLBACK_STAGE = { planning: '規劃', synthesis: '整合結果' };
+const FALLBACK_STAGE = { planning: '規劃', synthesis: '整合結果', mesh_answer: '回答子 agent' };
 const KIND_LABELS = { html: '網頁', code: '程式碼', markdown: '文件', data: '資料' };
 const needsKeyHelp = (message) => /api\s*key|金鑰|401|403|unauthor|invalid.*key/i.test(message ?? '');
 const pad = (n) => String(n).padStart(2, '0');
@@ -28,6 +28,7 @@ export function createRunScreen({ S, actions, previewUrl }) {
   const costEl = h('div');
   const planEl = h('div');
   const tasksEl = h('div');
+  const meshEl = h('div');
   const feedEl = h('div');
   const browserEl = h('div');
   const resultEl = h('div');
@@ -37,17 +38,25 @@ export function createRunScreen({ S, actions, previewUrl }) {
 
   const cancelBtn = h('button', {
     type: 'button',
-    class: 'btn btn--danger btn--block',
+    id: 'run-cancel',
+    class: 'btn btn--danger btn--small',
     onClick: () => S.shownRunId && actions.cancel(S.shownRunId),
   }, '取消任務');
-  const footer = h('div', { class: 'run__footer', hidden: true }, cancelBtn);
-
+  const statusEl = h('div');
   const backBtn = h('button', { type: 'button', class: 'linkbtn', onClick: actions.newTask }, icon('back', 14), '新任務');
+  const stepEl = h('p', { class: 'run__step', role: 'status', hidden: true });
+
+  // 詳細過程：費用、計畫、子任務、動態、瀏覽器動作，預設收合
+  const detailsMeta = h('span', { class: 'details-root__meta' });
+  const detailsEl = h('details', { class: 'details-root' },
+    h('summary', { 'data-fk': 'details-root' }, '詳細過程', detailsMeta, icon('chevron', 16)),
+    h('div', { class: 'details-root__body' }, planEl, costEl, tasksEl, feedEl, browserEl));
+
   const el = h('div', { class: 'view view--run' },
-    h('div', { class: 'run__nav' }, backBtn, clockEl),
+    h('div', { class: 'run__bar' }, statusEl, h('div', { class: 'run__bar-end' }, clockEl, cancelBtn, backBtn)),
     header,
-    body,
-    footer);
+    stepEl,
+    body);
 
   const signatures = new Map();
   function patch(container, signature, build) {
@@ -74,10 +83,10 @@ export function createRunScreen({ S, actions, previewUrl }) {
     const { run } = view;
     const status = view.cancelling ? 'cancelling' : run.status;
     const label = view.cancelling ? '取消中' : RUN_STATUS_LABELS[run.status] ?? run.status;
+    replaceKeepingFocus(statusEl, [h('p', { class: 'run__status', 'data-status': status },
+      h('span', { class: 'lamp', 'data-status': lampFor(status), 'aria-hidden': 'true' }),
+      h('span', null, label))]);
     return h('header', { class: 'run__head' },
-      h('p', { class: 'run__status', 'data-status': status },
-        h('span', { class: 'lamp', 'data-status': lampFor(status), 'aria-hidden': 'true' }),
-        h('span', null, label)),
       h('h2', { class: 'run__goal' }, run.goal || '（沒有目標文字）'),
       view.context?.length
         ? h('p', { class: 'run__context' }, `附加了 ${view.context.length} 項情境`)
@@ -129,7 +138,7 @@ export function createRunScreen({ S, actions, previewUrl }) {
     if (!summary && !isFinished(view.run.status)) {
       return h('section', { class: 'plan plan--waiting' },
         h('h3', { class: 'block-title' }, '計畫'),
-        h('p', { class: 'muted' }, '正在把目標拆成子任務…'));
+        h('p', { class: 'muted' }, '規劃中'));
     }
     if (!summary) return null;
     return h('section', { class: 'plan', 'aria-labelledby': 'plan-title' },
@@ -138,8 +147,9 @@ export function createRunScreen({ S, actions, previewUrl }) {
   }
 
   // ---------- 子任務軌道 ----------
-  function buildCue(node, label, depth) {
+  function buildCue(node, label, depth, view) {
     const { task } = node;
+    const remote = deviceLabel(view.mesh.get(task.id)?.device);
     const statusLabel = TASK_STATUS_LABELS[task.status] ?? task.status;
     const duration = task.startedAt && task.finishedAt ? formatDuration(task.finishedAt - task.startedAt) : null;
     const agentName = task.agent ? `@${task.agent}` : '未指定';
@@ -158,6 +168,7 @@ export function createRunScreen({ S, actions, previewUrl }) {
           h('span', { class: 'cue__title' }, task.title)),
         h('p', { class: 'cue__meta' },
           h('span', { class: 'tag', title: AGENT_LABELS[task.agent] ?? '' }, agentName),
+          remote && h('span', { class: 'tag tag--accent' }, `在 ${remote} 執行`),
           task.model && h('span', { class: 'cue__model', title: task.provider ?? '' }, task.model),
           h('span', { class: 'cue__state' }, statusLabel),
           duration && h('span', { class: 'cue__time' }, duration)),
@@ -173,7 +184,7 @@ export function createRunScreen({ S, actions, previewUrl }) {
           task.result && md(task.result),
           task.sources.length ? sourceList(task.sources) : null))),
       node.children.length
-        ? h('ol', { class: 'cues cues--nested' }, node.children.map((child, i) => buildCue(child, `${label}.${i + 1}`, depth + 1)))
+        ? h('ol', { class: 'cues cues--nested' }, node.children.map((child, i) => buildCue(child, `${label}.${i + 1}`, depth + 1, view)))
         : null);
   }
 
@@ -199,7 +210,57 @@ export function createRunScreen({ S, actions, previewUrl }) {
       h('div', { class: 'block-head' },
         h('h3', { class: 'block-title', id: 'tasks-title' }, '子任務'),
         h('span', { class: 'block-count' }, progress.join('，'))),
-      h('ol', { class: 'cues' }, tree.map((node, i) => buildCue(node, pad(i + 1), 0))));
+      h('ol', { class: 'cues' }, tree.map((node, i) => buildCue(node, pad(i + 1), 0, view))));
+  }
+
+  // ---------- 跨裝置協作 ----------
+  const MESH_ENTRY = {
+    question: { label: '子 agent 問', cls: 'mesh__msg--question' },
+    answer: { label: '主 agent 答', cls: 'mesh__msg--answer' },
+    report: { label: '回報', cls: 'mesh__msg--report' },
+  };
+
+  function buildMeshNode(link, view) {
+    const isSub = link.role === 'sub';
+    // 子 agent 端沒有 mesh_dispatch，狀態跟著這台的任務走
+    const statusKey = isSub ? (isFinished(view.run.status) ? view.run.status : 'running') : link.status;
+    const status = dispatchStatus(statusKey);
+    const name = isSub ? '這台裝置' : deviceLabel(link.device) ?? '其他裝置';
+    const owner = isSub ? null : meshOwner(link);
+    const taskTitle = view.tasks.get(link.taskId)?.title;
+    return h('li', { class: 'mesh__node', 'data-status': statusKey },
+      h('div', { class: 'mesh__device' },
+        h('span', { class: 'lamp mesh__lamp', 'data-status': status.lamp, 'aria-hidden': 'true' }),
+        h('div', { class: 'mesh__device-body' },
+          h('p', { class: 'mesh__name' }, name, owner && h('span', { class: 'tag tag--accent' }, `${owner}的裝置`)),
+          h('p', { class: 'mesh__state' },
+            `子 agent・${status.label}${typeof link.costUsd === 'number' && link.costUsd > 0 ? `・${formatUsd(link.costUsd)}` : ''}`))),
+      (link.goal || taskTitle) && h('p', { class: 'mesh__goal' },
+        h('span', { class: 'mesh__label' }, isSub ? '正在做' : '派工內容'),
+        clip(stripControls(link.goal ?? taskTitle), 200)),
+      link.entries.length ? h('ol', { class: 'mesh__thread' }, link.entries.map((entry) => {
+        const meta = MESH_ENTRY[entry.kind];
+        return h('li', { class: `mesh__msg ${meta.cls}` },
+          h('span', { class: 'mesh__label' }, meta.label),
+          h('span', { class: 'mesh__text' }, clip(stripControls(entry.text), 600)));
+      })) : null);
+  }
+
+  function buildMesh(view) {
+    if (view.mesh.size === 0) return null;
+    const links = [...view.mesh.values()];
+    const isSubView = links.every((l) => l.role === 'sub');
+    const active = links.filter((l) => l.role !== 'sub' && ['pending', 'accepted', 'running'].includes(l.status)).length;
+    const hubLamp = isFinished(view.run.status) ? 'done' : 'running';
+    return h('section', { class: 'mesh', 'aria-labelledby': 'mesh-title' },
+      h('div', { class: 'block-head' },
+        h('h3', { class: 'block-title', id: 'mesh-title' }, '跨裝置協作'),
+        h('span', { class: 'block-count' }, isSubView ? '這台是子 agent' : `${links.length} 台裝置${active ? `，${active} 台進行中` : ''}`)),
+      h('p', { class: 'mesh__hub' },
+        h('span', { class: 'lamp', 'data-status': hubLamp, 'aria-hidden': 'true' }),
+        h('strong', null, '主 agent'),
+        h('span', { class: 'muted' }, isSubView ? '在發起派工的裝置' : '這台裝置，負責分工與回答提問')),
+      h('ol', { class: 'mesh__nodes' }, links.map((link) => buildMeshNode(link, view))));
   }
 
   // ---------- 協作動態 ----------
@@ -417,9 +478,11 @@ export function createRunScreen({ S, actions, previewUrl }) {
     if (!view) {
       header.replaceChildren(h('p', { class: 'muted' }, '正在讀取任務…'));
       body.replaceChildren();
+      statusEl.replaceChildren();
       signatures.clear();
       lastOrder = null;
-      footer.hidden = true;
+      cancelBtn.hidden = true;
+      stepEl.hidden = true;
       return;
     }
 
@@ -435,23 +498,29 @@ export function createRunScreen({ S, actions, previewUrl }) {
     patch(header, JSON.stringify([run.status, run.goal, view.cancelling, view.context?.length]), () => buildHeader(view));
     patch(costEl, JSON.stringify([run.costUsd, run.inputTokens, run.outputTokens, view.plan?.estimatedCostUsd, view.maxCostUsd]), () => buildCost(view));
     patch(planEl, JSON.stringify([view.plan?.summary, run.planSummary, finished]), () => buildPlan(view));
-    patch(tasksEl, JSON.stringify([[...view.tasks.values()].map(taskSig), view.plan?.tasks]), () => buildTasks(view));
+    patch(tasksEl, JSON.stringify([[...view.tasks.values()].map(taskSig), view.plan?.tasks, [...view.mesh.values()].map((l) => [l.taskId, deviceLabel(l.device)])]), () => buildTasks(view));
+    patch(meshEl, JSON.stringify([...view.mesh.values()].map((l) => [l.key, l.status, l.goal, l.role, l.costUsd, deviceLabel(l.device), meshOwner(l), l.entries.length, view.tasks.get(l.taskId)?.title]).concat([[run.status]])), () => buildMesh(view));
     patch(feedEl, String(view.feed.length), () => buildFeed(view));
     patch(browserEl, JSON.stringify(view.browserLog.map((e) => [e.state, e.tool, e.error])), () => buildBrowserLog(view));
     patch(resultEl, JSON.stringify([run.status, run.finalResult, run.error, [...view.tasks.values()].map((t) => [t.status, t.sources.length])]), () => buildResult(view));
     patch(artifactsEl, JSON.stringify(view.artifacts.map((a) => [a.id, a.name, a.kind, a.createdBy, a.content?.length ?? null, S.openPreviews.has(a.id ?? a.name)])), () => buildArtifacts(view));
 
-    // 進行中先看進度；結束後把結果放最前面，不必往下捲才看得到答案
-    const order = finished
-      ? [resultEl, artifactsEl, costEl, planEl, tasksEl, feedEl, browserEl]
-      : [planEl, costEl, tasksEl, feedEl, browserEl, resultEl, artifactsEl];
+    // 進行中先看協作與目前步驟；結束後把結果放最前面。其餘都在「詳細過程」裡
+    const order = finished ? [resultEl, artifactsEl, meshEl, detailsEl] : [meshEl, artifactsEl, detailsEl];
     const orderKey = finished ? 'finished' : 'running';
     if (orderKey !== lastOrder) {
       body.replaceChildren(...order);
       lastOrder = orderKey;
     }
 
-    footer.hidden = finished;
+    const step = currentStep(view);
+    stepEl.hidden = !step;
+    stepEl.textContent = step ? `目前：${step}` : '';
+    const { total, done } = taskProgress(view);
+    detailsMeta.textContent = [total ? `${done}／${total} 完成` : null, formatUsd(run.costUsd ?? 0)].filter(Boolean).join('，');
+
+    cancelBtn.hidden = finished;
+    backBtn.hidden = !finished;
     cancelBtn.disabled = view.cancelling;
     cancelBtn.textContent = view.cancelling ? '取消中…' : '取消任務';
     tick();

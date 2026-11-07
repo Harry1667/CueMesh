@@ -2,10 +2,12 @@
 // 依賴全部由參數傳入（engine、store、browser），dev.html 與測試才能換成假物件。
 import { h, sealMark } from './dom.js';
 import {
-  applyEvent, buildStartOptions, connectedProviders, createApprovalQueue, createRunView, isFinished, mergeRun,
+  applyEvent, buildStartOptions, connectedProviders, createApprovalQueue, createConsentQueue, createRunView, deviceLabel,
+  dispatchBlocker, dispatchContext, dispatchTargets, isDispatchOpen, isFinished, mergeDispatches, mergeProjects, mergeRun,
   normalizeRunRow, PROVIDERS, retryContext, RUN_STATUS_LABELS, startBlocker,
 } from './logic.js';
 import { createApprovalDialog } from './view-approval.js';
+import { createConsentDialog } from './view-consent.js';
 import { createHistoryView } from './view-history.js';
 import { createRunScreen } from './view-run.js';
 import { createSettingsView } from './view-settings.js';
@@ -46,9 +48,10 @@ export function applyTheme(pref) {
 const errorText = (err) => (err instanceof Error ? err.message : String(err ?? '未知錯誤'));
 
 export function mountApp(root, deps = {}) {
-  const { engine, store, browser, catalog = {}, previewUrl = null, onSettingsChange = null } = deps;
+  const { engine, store, browser, catalog = {}, previewUrl = null, onSettingsChange = null, cloud = null, cloudLoadError = null, assetBase = 'icons/' } = deps;
   if (!engine || !store || !browser) throw new Error('mountApp 需要 engine、store、browser');
   const approvals = deps.approvals ?? createApprovalQueue();
+  const consents = deps.consents ?? createConsentQueue();
 
   const S = {
     view: 'task',
@@ -78,6 +81,18 @@ export function mountApp(root, deps = {}) {
     addingProject: false,
     projectError: null,
     toast: null,
+    runTarget: 'local',
+    cloudLoadError,
+    // 雲端狀態獨立放：雲端故障時只影響這裡，本機任務照常
+    cloudState: {
+      status: 'signed_out', user: null, device: null, baseUrl: null,
+      devices: [], devicesError: null,
+      dispatches: [], dispatchesError: null,
+      remoteProjects: [],
+      vault: null, vaultError: null,
+      members: [], membersError: null,
+      invite: null,
+    },
   };
 
   applyTheme(S.themePref);
@@ -149,11 +164,14 @@ export function mountApp(root, deps = {}) {
       S.projects = projects ?? [];
       // 任務一定要屬於某個專案，第一次使用時自動建好，不要讓使用者先做這件無關的事
       if (S.projects.length === 0) S.projects = [await store.createProject({ name: '我的專案', description: '' })];
+      S.projects = mergeProjects(S.projects, []);
       const remembered = readPref(PROJECT_KEY);
       S.projectId = S.projects.some((p) => p.id === remembered) ? remembered : S.projects[0].id;
       onSettingsChange?.(S.settings);
       S.loading = false;
       await refreshRuns();
+      // 雲端在本機載入完成後才開始，而且不等它：連不上伺服器不可拖慢或擋住單機使用
+      void initCloud();
     } catch (err) {
       S.loading = false;
       S.loadError = errorText(err);
@@ -161,12 +179,175 @@ export function mountApp(root, deps = {}) {
     render();
   }
 
+  // ---------- 雲端 ----------
+  // 每個讀取都各自處理錯誤：雲端出問題只顯示在相關區塊，不影響其他功能
+  const cloudErrorText = (prefix, err) => `${prefix}：${errorText(err)}`;
+
+  function syncCloudIdentity() {
+    if (!cloud) return;
+    const c = S.cloudState;
+    c.user = cloud.getUser?.() ?? null;
+    c.device = cloud.getDevice?.() ?? null;
+    c.status = cloud.getStatus?.() ?? 'signed_out';
+    c.baseUrl = cloud.getBaseUrl?.() ?? null;
+  }
+
+  async function refreshDevices() {
+    if (!cloud || !S.cloudState.user) return;
+    try {
+      const list = await cloud.listDevices();
+      S.cloudState.devices = list ?? [];
+      S.cloudState.devicesError = null;
+    } catch (err) {
+      S.cloudState.devicesError = cloudErrorText('讀取裝置失敗', err);
+    }
+    render();
+  }
+
+  async function refreshDispatches() {
+    if (!cloud || !S.cloudState.user) return;
+    try {
+      const [incoming, outgoing] = await Promise.all([
+        cloud.listDispatches({ role: 'incoming' }), cloud.listDispatches({ role: 'outgoing' }),
+      ]);
+      S.cloudState.dispatches = mergeDispatches(incoming, outgoing);
+      S.cloudState.dispatchesError = null;
+    } catch (err) {
+      S.cloudState.dispatchesError = cloudErrorText('讀取派工失敗', err);
+    }
+    render();
+  }
+
+  async function refreshCloudProjects() {
+    if (!cloud || !S.cloudState.user) return;
+    try {
+      const remote = (await cloud.listProjects()) ?? [];
+      // 伺服器的專案清單不一定帶成員數，擁有者要自己查，才知道專案是不是已經共享給別人
+      S.cloudState.remoteProjects = await Promise.all(remote.map(async (project) => {
+        if (project.role !== 'owner' || typeof project.memberCount === 'number') return project;
+        try {
+          return { ...project, memberCount: ((await cloud.listMembers(project.id)) ?? []).length };
+        } catch {
+          return project; // 只影響「（共享）」標示，不影響功能
+        }
+      }));
+      S.projects = mergeProjects(S.projects.filter((p) => !p.remoteOnly), S.cloudState.remoteProjects);
+      render();
+    } catch (err) {
+      console.warn('CueMesh：讀取雲端專案失敗', err);
+    }
+  }
+
+  async function refreshVault() {
+    if (!cloud || !S.cloudState.user) return;
+    try {
+      S.cloudState.vault = await cloud.vaultStatus();
+      S.cloudState.vaultError = null;
+    } catch (err) {
+      S.cloudState.vaultError = cloudErrorText('讀取金鑰備份狀態失敗', err);
+    }
+    render();
+  }
+
+  async function refreshMembers() {
+    if (!cloud || !S.cloudState.user || !S.projectId) return;
+    const projectId = S.projectId;
+    try {
+      const members = (await cloud.listMembers(projectId)) ?? [];
+      if (projectId !== S.projectId) return;
+      S.cloudState.members = members;
+      S.cloudState.membersError = null;
+    } catch (err) {
+      if (projectId !== S.projectId) return;
+      S.cloudState.members = [];
+      S.cloudState.membersError = err?.status === 404 ? '這個專案還沒同步到雲端，先跑一個任務或稍等同步完成。' : cloudErrorText('讀取成員失敗', err);
+    }
+    render();
+  }
+
+  const refreshAllCloud = () => Promise.all([refreshDevices(), refreshDispatches(), refreshCloudProjects(), refreshVault(), refreshMembers()]);
+
+  // 伺服器事件可能一次來很多，合併後再讀取
+  const cloudTimers = new Map();
+  const debounced = (key, fn) => {
+    if (cloudTimers.has(key)) return;
+    cloudTimers.set(key, setTimeout(() => {
+      cloudTimers.delete(key);
+      fn();
+    }, 150));
+  };
+
+  function onCloudEvent(event) {
+    if (!event?.type) return;
+    const payload = event.payload?.dispatch ?? event.payload;
+    switch (event.type) {
+      case 'status': {
+        const wasOnline = S.cloudState.status === 'online';
+        syncCloudIdentity();
+        if (event.status) S.cloudState.status = event.status;
+        if (S.cloudState.status === 'online' && !wasOnline) debounced('all', refreshAllCloud);
+        if (!S.cloudState.user) consents.dismissAll('已登出');
+        break;
+      }
+      case 'device_presence':
+        debounced('devices', refreshDevices);
+        break;
+      case 'dispatch_created':
+      case 'dispatch_message':
+        debounced('dispatches', refreshDispatches);
+        break;
+      case 'dispatch_update':
+        debounced('dispatches', refreshDispatches);
+        // 發起方取消或逾期時，同意視窗不該繼續問
+        if (payload?.id && payload.status && !isDispatchOpen(payload.status)) consents.dismiss(payload.id, '派工已結束');
+        break;
+      case 'member_update':
+        debounced('members', () => Promise.all([refreshMembers(), refreshCloudProjects(), refreshDevices()]));
+        break;
+      case 'vault_update':
+        debounced('vault', refreshVault);
+        break;
+      default:
+        break;
+    }
+    render();
+  }
+
+  // 邀請與派工都要專案已在雲端。同步要等第一個任務，這裡先確保它存在，否則使用者會看到「找不到專案」。
+  // 共享專案只有擁有者能更新，所以成員的專案不重送。
+  async function ensureProjectOnServer() {
+    const project = S.projects.find((p) => p.id === S.projectId);
+    if (!project || project.remoteOnly || project.role === 'member') return;
+    await cloud.putProject?.({ id: project.id, name: project.name, description: project.description ?? '' });
+  }
+
+  let unsubscribeCloud = null;
+  async function initCloud() {
+    if (!cloud) return;
+    try {
+      syncCloudIdentity();
+      unsubscribeCloud = cloud.subscribe?.(onCloudEvent) ?? null;
+      render();
+      if (S.cloudState.user) {
+        // 上次登入還有效：重新連上即時事件。不等待，連不上也不能卡住畫面
+        Promise.resolve(cloud.connect?.()).catch((err) => console.warn('CueMesh：連線失敗', err));
+        await refreshAllCloud();
+      }
+    } catch (err) {
+      console.warn('CueMesh：雲端初始化失敗', err);
+    }
+  }
+
   // ---------- 動作 ----------
   const actions = {
     navigate(view) {
       S.view = view;
       S.toast = null;
-      if (view === 'history') refreshRuns();
+      if (view === 'history') {
+        refreshRuns();
+        refreshDispatches();
+      }
+      if (view === 'settings') refreshAllCloud();
       render();
       main.scrollTop = 0;
     },
@@ -179,7 +360,21 @@ export function mountApp(root, deps = {}) {
     async selectProject(id) {
       S.projectId = id;
       writePref(PROJECT_KEY, id);
+      S.cloudState.members = [];
+      S.cloudState.membersError = null;
+      S.cloudState.invite = null;
+      // 共享專案本機還沒有資料時先建立，才能在這台執行；store 不支援時任務頁會說明原因
+      const project = S.projects.find((p) => p.id === id);
+      if (project?.remoteOnly && store.ensureProject) {
+        try {
+          await store.ensureProject({ id: project.id, name: project.name, description: project.description ?? '' });
+          project.remoteOnly = false;
+        } catch (err) {
+          notify(`無法在這台建立共享專案：${errorText(err)}`);
+        }
+      }
       await refreshRuns();
+      refreshMembers();
     },
 
     async createProject(name) {
@@ -191,7 +386,7 @@ export function mountApp(root, deps = {}) {
       }
       try {
         const project = await store.createProject({ name: clean, description: '' });
-        S.projects = [...S.projects, project];
+        S.projects = mergeProjects([...S.projects.filter((p) => !p.remoteOnly), project], S.cloudState.remoteProjects);
         S.addingProject = false;
         S.projectError = null;
         await actions.selectProject(project.id);
@@ -206,8 +401,8 @@ export function mountApp(root, deps = {}) {
       try {
         await store.deleteProject(id);
         S.projects = S.projects.filter((p) => p.id !== id);
-        if (S.projects.length === 0) S.projects = [await store.createProject({ name: '我的專案', description: '' })];
-        await actions.selectProject(S.projects[0].id);
+        if (!S.projects.some((p) => !p.remoteOnly)) S.projects = mergeProjects([await store.createProject({ name: '我的專案', description: '' })], S.cloudState.remoteProjects);
+        await actions.selectProject((S.projects.find((p) => !p.remoteOnly) ?? S.projects[0]).id);
       } catch (err) {
         notify(`刪除專案失敗：${errorText(err)}`);
       }
@@ -256,9 +451,139 @@ export function mountApp(root, deps = {}) {
       render();
     },
 
+    setRunTarget(target) {
+      S.runTarget = target;
+      S.startError = null;
+      render();
+    },
+
+    async dispatchTask() {
+      S.starting = true;
+      S.startError = null;
+      render();
+      const goal = S.goal.trim();
+      const target = S.cloudState.devices.find((d) => d.id === S.runTarget);
+      try {
+        await ensureProjectOnServer();
+        const { items } = dispatchContext(S.context);
+        const dispatch = await cloud.dispatch({
+          targetDeviceId: S.runTarget,
+          projectId: S.projectId,
+          goal,
+          context: items,
+          options: buildStartOptions({ mode: S.mode, maxCostUsd: S.settings.maxCostUsd }),
+        });
+        S.cloudState.dispatches = mergeDispatches([], [dispatch, ...S.cloudState.dispatches.filter((d) => d.id !== dispatch?.id)]);
+        S.goal = '';
+        S.context = [];
+        S.captureNote = null;
+        taskView.clearGoal();
+        actions.navigate('history');
+        notify(`已派給 ${deviceLabel(target) ?? '其他裝置'}，狀態會顯示在這裡。`, 'info');
+        announce('已送出派工');
+      } catch (err) {
+        S.startError = `無法派工：${errorText(err)}`;
+      } finally {
+        S.starting = false;
+        render();
+      }
+    },
+
+    async cancelDispatch(id) {
+      try {
+        await cloud.cancelDispatch(id);
+        await refreshDispatches();
+        announce('已取消派工');
+      } catch (err) {
+        notify(`取消派工失敗：${errorText(err)}`);
+      }
+    },
+
+    async authenticate({ mode, email, password, displayName }) {
+      if (mode === 'register') await cloud.register({ email, password, displayName });
+      else await cloud.login({ email, password });
+      syncCloudIdentity();
+      render();
+      announce('已登入');
+      void refreshAllCloud();
+    },
+
+    async logout() {
+      try {
+        await cloud.logout();
+      } catch (err) {
+        // 伺服器連不上也要能在本機登出，否則使用者會被卡在登入狀態
+        console.warn('CueMesh：伺服器登出失敗', err);
+      }
+      consents.dismissAll('已登出');
+      syncCloudIdentity();
+      Object.assign(S.cloudState, { devices: [], dispatches: [], remoteProjects: [], members: [], vault: null, invite: null, devicesError: null, dispatchesError: null, membersError: null, vaultError: null });
+      S.runTarget = 'local';
+      S.projects = mergeProjects(S.projects.filter((p) => !p.remoteOnly), []);
+      if (!S.projects.some((p) => p.id === S.projectId)) await actions.selectProject(S.projects[0].id);
+      render();
+      announce('已登出');
+    },
+
+    async setServerUrl(url) {
+      await cloud.setBaseUrl(url);
+      syncCloudIdentity();
+      render();
+    },
+
+    async renameDevice(name) {
+      await cloud.renameDevice(name);
+      syncCloudIdentity();
+      await refreshDevices();
+    },
+
+    async setAcceptRemote(value) {
+      await cloud.setAcceptRemote(value);
+      syncCloudIdentity();
+      await refreshDevices();
+    },
+
+    async vaultPush(passphrase) {
+      await cloud.vaultPush(passphrase);
+      await refreshVault();
+    },
+
+    async vaultPull(passphrase) {
+      await cloud.vaultPull(passphrase);
+      await refreshKeys();
+      await refreshVault();
+    },
+
+    async createInvite() {
+      await ensureProjectOnServer();
+      const invite = await cloud.createInvite(S.projectId);
+      S.cloudState.invite = { ...invite, projectId: S.projectId };
+      render();
+      refreshCloudProjects();
+      refreshMembers();
+    },
+
+    async acceptInvite(code) {
+      const result = await cloud.acceptInvite(code);
+      const project = result?.project ?? result;
+      await refreshCloudProjects();
+      await refreshDevices();
+      if (project?.id) await actions.selectProject(project.id);
+      return project?.name ?? '';
+    },
+
+    async removeMember(userId) {
+      await cloud.removeMember(S.projectId, userId);
+      await Promise.all([refreshMembers(), refreshCloudProjects(), refreshDevices()]);
+    },
+
     async start() {
       if (S.starting) return;
-      if (startBlocker(blockerInput())) return;
+      if (getBlocker()) return;
+      if (S.runTarget !== 'local') {
+        await actions.dispatchTask();
+        return;
+      }
       S.starting = true;
       S.startError = null;
       render();
@@ -416,7 +741,22 @@ export function mountApp(root, deps = {}) {
   const blockerInput = () => ({
     goal: S.goal, keyStatus: S.keyStatus, mode: S.mode, workflowId: S.workflowId,
     workflows: S.workflows, activeRunId: S.activeRunId, projectId: S.projectId,
+    projectRemoteOnly: Boolean(S.projects.find((p) => p.id === S.projectId)?.remoteOnly),
   });
+
+  // 派工到其他裝置用的是對方的 key，所以不要求這台有 key，也不受本機任務佔用影響
+  const getBlocker = () => {
+    if (S.runTarget === 'local') return startBlocker(blockerInput());
+    return dispatchBlocker({
+      goal: S.goal,
+      signedIn: Boolean(S.cloudState.user),
+      online: S.cloudState.status === 'online',
+      target: S.runTarget,
+      targets: dispatchTargets(S.cloudState.devices, S.cloudState.device?.id),
+      mode: S.mode,
+      projectId: S.projectId,
+    });
+  };
 
   function ensureRunView(runId) {
     let view = S.runViews.get(runId);
@@ -474,25 +814,24 @@ export function mountApp(root, deps = {}) {
   }
 
   // ---------- 外殼 ----------
-  const lamps = h('div', { class: 'keylamps', role: 'img' });
+  const NEW_PROJECT = '__new_project__';
   const projectSelect = h('select', {
     id: 'project-select',
     class: 'select select--bare',
     'aria-label': '目前專案',
-    onChange: (e) => actions.selectProject(e.target.value),
-  });
-  const addProjectBtn = h('button', {
-    type: 'button',
-    class: 'iconbtn',
-    'aria-label': '新增專案',
-    title: '新增專案',
-    onClick: () => {
-      S.addingProject = !S.addingProject;
-      S.projectError = null;
-      render();
-      if (S.addingProject) setTimeout(() => projectNameInput.focus(), 30);
+    onChange: (e) => {
+      if (e.target.value === NEW_PROJECT) {
+        // 這不是真的專案，要把選單還原，再打開新增表單
+        e.target.value = S.projectId;
+        S.addingProject = true;
+        S.projectError = null;
+        render();
+        setTimeout(() => projectNameInput.focus(), 30);
+        return;
+      }
+      actions.selectProject(e.target.value);
     },
-  }, '＋');
+  });
   const projectNameInput = h('input', {
     class: 'input',
     type: 'text',
@@ -520,7 +859,7 @@ export function mountApp(root, deps = {}) {
         S.addingProject = false;
         S.projectError = null;
         render();
-        addProjectBtn.focus();
+        projectSelect.focus();
       },
     }, '取消')),
   projectError);
@@ -531,21 +870,21 @@ export function mountApp(root, deps = {}) {
     onClick: () => actions.navigate(item.id),
   }, item.label)]));
 
+  // 只有出問題才顯示狀態，平常不佔頁首
+  const statusLine = h('p', { class: 'masthead__status', role: 'status', hidden: true });
+
   const header = h('header', { class: 'masthead' },
     h('div', { class: 'masthead__top' },
-      h('h1', { class: 'brand' }, sealMark(), h('span', { class: 'brand__name' }, 'CueMesh')),
+      h('h1', { class: 'brand' }, sealMark(assetBase), h('span', { class: 'brand__name' }, 'CueMesh')),
+      h('div', { class: 'masthead__project' }, projectSelect),
       h('nav', { class: 'nav', 'aria-label': '主要頁面' }, [...navButtons.values()])),
-    h('div', { class: 'masthead__project' },
-      h('label', { class: 'masthead__label', for: 'project-select' }, '專案'),
-      projectSelect,
-      addProjectBtn,
-      lamps),
+    statusLine,
     projectForm);
 
   const main = h('main', { class: 'sheet', id: 'main', tabindex: '-1' });
   const toastEl = h('div', { class: 'toast', hidden: true });
 
-  const ctx = { S, actions, catalog, previewUrl, blockerInput };
+  const ctx = { S, actions, catalog, previewUrl, getBlocker, cloud };
   const taskView = createTaskView(ctx);
   const runScreen = createRunScreen(ctx);
   const historyView = createHistoryView(ctx);
@@ -561,30 +900,33 @@ export function mountApp(root, deps = {}) {
   main.prepend(loading, loadErrorEl);
 
   const approvalDialog = createApprovalDialog(approvals, { announce, onCancelRun: actions.cancel });
-  root.replaceChildren(h('div', { class: 'app' }, header, main, toastEl, live, approvalDialog.el));
+  const consentDialog = createConsentDialog(consents, {
+    announce,
+    getLocalMaxCost: () => S.settings.maxCostUsd,
+    getProjectName: (id) => S.projects.find((p) => p.id === id)?.name ?? S.cloudState.remoteProjects.find((p) => p.id === id)?.name ?? null,
+  });
+  root.replaceChildren(h('div', { class: 'app' }, header, main, toastEl, live, approvalDialog.el, consentDialog.el));
 
-  function paintLamps() {
-    const connected = connectedProviders(S.keyStatus);
-    lamps.setAttribute('aria-label', connected.length
-      ? `已接上 ${connected.length} 家 AI：${connected.map((id) => PROVIDERS.find((p) => p.id === id).short).join('、')}`
-      : '還沒有接上任何 AI');
-    lamps.replaceChildren(...PROVIDERS.map((p) => h('span', {
-      class: `keylamp${connected.includes(p.id) ? ' is-on' : ''}`,
-      title: `${p.label}：${connected.includes(p.id) ? '已設定' : '未設定'}`,
-    })));
+  function paintStatus() {
+    const offline = S.cloudState.user && S.cloudState.status === 'offline';
+    statusLine.hidden = !offline;
+    statusLine.textContent = offline ? '連不上伺服器，協作暫停；這台的任務不受影響。' : '';
   }
 
   function paintProjects() {
-    const options = S.projects.map((p) => h('option', { value: p.id, selected: p.id === S.projectId }, p.name));
     // 專案名稱沒變就不重建，鍵盤正在選的時候才不會被打斷
-    const signature = JSON.stringify(S.projects.map((p) => [p.id, p.name]));
+    const signature = JSON.stringify(S.projects.map((p) => [p.id, p.name, p.shared, p.remoteOnly]));
     if (projectSelect.dataset.sig !== signature) {
-      projectSelect.replaceChildren(...options);
+      const option = (p) => h('option', { value: p.id, selected: p.id === S.projectId }, p.shared ? `${p.name}（共享）` : p.name);
+      const mine = S.projects.filter((p) => !p.shared && !p.remoteOnly);
+      const shared = S.projects.filter((p) => p.shared || p.remoteOnly);
+      projectSelect.replaceChildren(...(shared.length
+        ? [h('optgroup', { label: '我的專案' }, mine.map(option)), h('optgroup', { label: '共享與雲端專案' }, shared.map(option))]
+        : mine.map(option)), h('option', { value: NEW_PROJECT }, '＋ 新增專案…'));
       projectSelect.dataset.sig = signature;
     }
     if (S.projectId) projectSelect.value = S.projectId;
     projectForm.hidden = !S.addingProject;
-    addProjectBtn.setAttribute('aria-expanded', String(S.addingProject));
     projectError.hidden = !S.projectError;
     projectError.textContent = S.projectError ?? '';
   }
@@ -609,7 +951,7 @@ export function mountApp(root, deps = {}) {
       );
     }
 
-    paintLamps();
+    paintStatus();
     paintProjects();
 
     // 「執行畫面」屬於任務分頁
@@ -649,7 +991,9 @@ export function mountApp(root, deps = {}) {
 
   return {
     approvals,
+    consents,
     requestApproval: approvals.request,
+    requestConsent: consents.request,
     navigate: actions.navigate,
     openRun: actions.openRun,
     setGoal: (goal) => {
@@ -666,10 +1010,13 @@ export function mountApp(root, deps = {}) {
     unmount() {
       unmounted = true;
       unsubscribe?.();
+      unsubscribeCloud?.();
       clearInterval(clock);
       clearTimeout(renderTimer);
       for (const timer of syncTimers.values()) clearTimeout(timer);
+      for (const timer of cloudTimers.values()) clearTimeout(timer);
       approvalDialog.destroy();
+      consentDialog.destroy();
       root.replaceChildren();
     },
   };

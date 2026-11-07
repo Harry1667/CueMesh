@@ -1,6 +1,7 @@
 // 設定頁：API key、批准模式、預算、團隊模型、工作流編輯器、模型統計、外觀。
 // API key 只在輸入框裡短暫存在，儲存後立刻清空，畫面上只顯示 store 回報的末四碼。
 import { confirmButton, h, icon, replaceKeepingFocus } from './dom.js';
+import { createAccountView } from './view-account.js';
 import {
   AGENT_LABELS, formatDuration, formatUsd, moveItem, normalizeStats, parseMaxCost, PROVIDERS, validateWorkflow, workflowPayload,
 } from './logic.js';
@@ -8,7 +9,9 @@ import {
 const errorText = (err) => (err instanceof Error ? err.message : String(err ?? '未知錯誤'));
 const WORKFLOW_AGENTS = ['research', 'coding', '3d', 'vision', 'review', 'browser', 'planning'];
 
-export function createSettingsView({ S, actions, catalog }) {
+export function createSettingsView(ctx) {
+  const { S, actions, catalog } = ctx;
+  const account = createAccountView(ctx);
   const agents = catalog.AGENT_TYPES ? Object.keys(catalog.AGENT_TYPES) : WORKFLOW_AGENTS;
   const models = Array.isArray(catalog.MODELS) ? catalog.MODELS : [];
   const modelLabel = (ref) => {
@@ -16,10 +19,12 @@ export function createSettingsView({ S, actions, catalog }) {
     return models.find((m) => m.id === id)?.label ?? id;
   };
 
-  const part = (id, title, description, ...children) => h('section', { class: 'part part--settings', id: `settings-${id}`, 'aria-labelledby': `${id}-title`, tabindex: '-1' },
-    h('h2', { class: 'part__title', id: `${id}-title` }, title),
-    description && h('p', { class: 'hint' }, description),
-    ...children);
+  // 常用區段預設展開，進階區段預設收合
+  const part = (id, title, description, { open = true } = {}, ...children) => h('details', { class: 'section', id: `settings-${id}`, open },
+    h('summary', { 'data-fk': `section-${id}` }, h('h2', { class: 'part__title', id: `${id}-title` }, title), icon('chevron', 16)),
+    h('div', { class: 'section__body' },
+      description && h('p', { class: 'hint' }, description),
+      ...children));
 
   // ---------- API key ----------
   const keyRows = new Map();
@@ -473,13 +478,20 @@ export function createSettingsView({ S, actions, catalog }) {
 
   const el = h('div', { class: 'view view--settings' },
     h('h2', { class: 'view-title' }, '設定'),
-    part('keys', 'API key', 'key 只存在這個瀏覽器，不會傳給 CueMesh 網站，儲存後只顯示末四碼。瀏覽器的儲存空間沒有加密，請不要在共用電腦上使用。', keysBox),
-    part('approvalmode', '批准模式', '密碼與付款欄位一律由你親自輸入，不受這裡影響。', approvalBox, approvalError),
-    part('budget', '每次任務的預算上限', null, budgetForm, budgetStatus),
-    part('team', '團隊模型', '指定每個 agent 優先用哪個模型。失敗或沒有 key 時會自動換下一個。', teamBox, teamError),
-    part('workflows', '工作流', '把固定的步驟存起來，在任務頁選「工作流」模式執行。', workflowBox),
-    part('stats', '模型表現', '只統計你自己的任務，費用為依公開牌價的估算。', statsBox),
-    part('theme', '外觀', null, themeBox));
+    part('account', '帳號與裝置', null, {}, account.accountEl),
+    part('keys', 'API key', 'key 只存在這個瀏覽器，不會傳給 CueMesh 網站，儲存後只顯示末四碼。瀏覽器的儲存空間沒有加密，請不要在共用電腦上使用。', {}, keysBox, account.vaultEl),
+    part('limits', '批准與預算', null, {},
+      h('h3', { class: 'subhead', id: 'approvalmode-title' }, '批准模式'),
+      h('p', { class: 'hint' }, '密碼與付款欄位一律由你親自輸入，不受這裡影響。'),
+      approvalBox,
+      approvalError,
+      h('h3', { class: 'subhead' }, '每次任務的預算上限'),
+      budgetForm,
+      budgetStatus),
+    part('team', '團隊模型', '指定每個 agent 優先用哪個模型。失敗或沒有 key 時會自動換下一個。', { open: false }, teamBox, teamError),
+    part('workflows', '工作流', '把固定的步驟存起來，在任務頁選「工作流」執行。', { open: false }, workflowBox),
+    part('stats', '表現統計', '只統計你自己的任務，費用為依公開牌價的估算。', { open: false }, statsBox),
+    part('theme', '外觀', null, { open: false }, themeBox));
 
   function syncFields() {
     for (const [id, input] of approvalInputs) input.checked = S.settings.approvalMode === id;
@@ -491,6 +503,7 @@ export function createSettingsView({ S, actions, catalog }) {
   let lastWorkflowSig = null;
 
   function update(justShown) {
+    account.update(justShown);
     const keySig = JSON.stringify(S.keyStatus);
     if (justShown || keySig !== lastKeySig) {
       lastKeySig = keySig;
@@ -521,8 +534,10 @@ export function createSettingsView({ S, actions, catalog }) {
     focusSection(id) {
       const target = el.querySelector(`#settings-${id}`);
       if (!target) return;
+      target.open = true;
       target.scrollIntoView({ block: 'start' });
-      (target.querySelector('input:not([type=radio]), button') ?? target).focus();
+      const field = [...target.querySelectorAll('input:not([type=radio]), button')].find((node) => node.offsetParent !== null);
+      (field ?? target.querySelector('summary'))?.focus();
     },
   };
 }
