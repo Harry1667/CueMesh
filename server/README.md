@@ -1,6 +1,6 @@
 # CueMesh 雲端協作伺服器
 
-這是 CueMesh 的帳號、專案同步、派工與 SSE 伺服器。它使用 Node ESM、Express 與 Node 內建的 `node:sqlite`，不需要原生 SQLite npm 套件。
+這是 CueMesh 的帳號、專案同步、派工與 SSE 伺服器。它使用 Node ESM、Express 與 Node 內建的 `node:sqlite`，不需要原生 PostgreSQL npm 套件。
 
 ## 安全與資料範圍
 
@@ -18,7 +18,7 @@
 cd server
 cp .env.example .env
 npm install
-DATABASE_PATH=./data/cuemesh.sqlite npm start
+DATABASE_URL=./data/cuemesh.sqlite npm start
 ```
 
 環境變數：
@@ -26,9 +26,10 @@ DATABASE_PATH=./data/cuemesh.sqlite npm start
 | 名稱 | 說明 |
 | --- | --- |
 | `PORT` | HTTP 服務連接埠，預設 `3000`。 |
-| `DATABASE_PATH` | SQLite 檔案路徑；測試可用 `:memory:`。 |
+| `DATABASE_URL` | PostgreSQL 連線字串；用 Compose 時會自動組合，不要寫進記錄。 |
+| `POSTGRES_PASSWORD` | 資料庫密碼，只用英數字。 |
 | `WEBSITE_ORIGINS` | 逗號分隔的精確網站 Origin allowlist，例如 `https://app.example.com`。 |
-| `TRUST_PROXY` | 只有服務位於受信任反向代理之後才設 `true` 或 hop 數字；否則設 `false`。 |
+| `TRUST_PROXY` | 反向代理的層數，一層本機 Nginx 設 `1`。不要設 `true`，否則限流可被假標頭繞過。 |
 
 Chrome extension Origin 僅接受實際 Chrome extension ID 格式的 `chrome-extension://<32-char-id>`，不會使用 `*`。
 
@@ -49,13 +50,13 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-Compose 將 API 綁定為 `127.0.0.1:${HOST_PORT:-3000}`，不直接暴露到公網；SQLite 放在具名 volume `cuemesh-data`。備份前先停止容器，或使用 SQLite 的線上備份機制，避免直接複製正在寫入的 WAL 資料庫。
+Compose 將 API 綁定為 `127.0.0.1:${HOST_PORT:-3000}`，不直接暴露到公網；PostgreSQL 放在具名 volume `cuemesh-data`。備份前先停止容器，或使用 PostgreSQL 的線上備份機制，避免直接複製正在寫入的 WAL 資料庫。
 
-不要把 `.env`、SQLite volume 或 Docker socket 公開。正式網站必須透過 HTTPS 反向代理，再由代理轉送到 loopback port。
+不要把 `.env`、PostgreSQL volume 或 Docker socket 公開。正式網站必須透過 HTTPS 反向代理，再由代理轉送到 loopback port。
 
 ## Nginx 反向代理
 
-以下範例假設 Nginx 與 Compose 在同一台主機，且 TLS 已設定。使用 `X-Forwarded-*` 時，將 `.env` 的 `TRUST_PROXY=true` 設定為只信任這個 Nginx。
+以下範例假設 Nginx 與 Compose 在同一台主機，且 TLS 已設定。使用 `X-Forwarded-*` 時，將 `.env` 的 `TRUST_PROXY` 設為 `1`，只信任這個 Nginx。
 
 ```nginx
 server {
@@ -95,5 +96,32 @@ server {
 ## 營運限制
 
 - SSE presence 使用目前 Node process 的記憶體；多實例部署前需加入共享 pub/sub 或改為單一 API replica。
-- `DATABASE_PATH` 指向的目錄必須可寫。SQLite 適合單主機／單 volume；水平擴展前應遷移至支援併發的資料庫與事件匯流排。
+- `DATABASE_URL` 指向的目錄必須可寫。PostgreSQL 適合單主機／單 volume；水平擴展前應遷移至支援併發的資料庫與事件匯流排。
 - 服務本身不會代替擴充功能批准瀏覽器動作；跨帳號派工仍必須由目標裝置顯示批准 UI。
+
+## 備份與還原
+
+資料都在 Compose 的 `db` 服務裡。
+
+```bash
+# 備份
+docker compose -p cuemesh exec -T db pg_dump -U cuemesh -d cuemesh --clean --if-exists > cuemesh-$(date +%Y%m%d-%H%M).sql
+
+# 還原（會覆蓋現有資料）
+docker compose -p cuemesh exec -T db psql -U cuemesh -d cuemesh < cuemesh-備份檔.sql
+```
+
+## 測試
+
+```bash
+npm test
+```
+
+測試跑在真正的 PostgreSQL：有 `TEST_DATABASE_URL` 就用它，否則啟動 `embedded-postgres` 的暫時實例。測試會清空資料庫，**不要指向正式環境**。
+
+## 已知限制
+
+- 線上狀態存在單一 Node 程序的記憶體，多台 API 前要加共享的訊息通道。
+- 寫入以全域鎖序列化，避免事件序號亂序與死鎖；單機足夠，流量大時要重新設計。
+- 登入 token 沒有到期時間，只能登出撤銷。
+- 只支援 Email 加密碼，還沒有 Email 驗證與忘記密碼。
