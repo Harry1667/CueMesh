@@ -12,7 +12,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Open http://127.0.0.1:4180. Vite proxies `/api` to `http://127.0.0.1:8000`. A missing backend produces an explicit live error.
+Open http://127.0.0.1:4180. Both Vite development and preview proxy `/api` to `https://cuemesh.looptw.com`, the extension's configured server. Live sign-in and writes use that service. For a local backend, set `CUEMESH_API_TARGET=http://127.0.0.1:3000` before starting Vite. A missing backend produces an explicit live error.
 
 | Route        | Purpose                                                      |
 | ------------ | ------------------------------------------------------------ |
@@ -50,3 +50,5 @@ pnpm build
 After intentional contract changes use `pnpm contract:generate`. Generated OpenAPI describes only the endpoints consumed here, not a replacement backend specification.
 
 Deploy the contents of `dist/` using [Oracle/Nginx instructions](deploy/README.md). CI is provided as a template under `ci/`; it is not installed at repository root. See [VALIDATION.md](docs/VALIDATION.md) for actual evidence and untested boundaries.
+
+The public [workspace](https://cuemesh.looptw.com/workspace) loads in live mode. Use [DEMO-RECORDING.md](docs/DEMO-RECORDING.md) for device linking and the one-minute recording rehearsal; a loaded page alone does not establish end-to-end readiness.

@@ -105,7 +105,7 @@ export const LoginRequestSchema = z.object({
   password: z.string().min(1).max(1024),
 });
 export const RegisterRequestSchema = LoginRequestSchema.extend({
-  displayName: z.string().trim().min(1).max(100),
+  displayName: z.string().trim().min(1).max(80),
   password: z.string().min(10).max(1024),
 });
 export const ProjectsResponseSchema = z.object({ projects: z.array(ProjectSchema) });

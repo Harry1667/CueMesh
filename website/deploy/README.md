@@ -1,6 +1,6 @@
 # Oracle Cloud VM + Nginx
 
-The release is static `dist/` content; Node is not required to serve it. Nginx serves the four SPA routes and proxies `/api/*` to Harry's server. No VM deployment has been performed and no public domain/IP was supplied.
+The release is static `dist/` content; Node is not required to serve it. Nginx serves the four SPA routes and proxies `/api/*` to Harry's server. The public site at https://cuemesh.looptw.com responds and its workspace renders the live sign-in screen. This frontend review did not deploy it, inspect the VM configuration, or establish which commit is deployed.
 
 ## Build
 
@@ -32,7 +32,7 @@ Keep demo mode until a working server is available. This public JSON must never 
 
 1. Upload only `dist/` contents into a new release directory under `/srv/cuemesh/releases/`.
 2. Point `/srv/cuemesh/current` at that release; keep the previous release for rollback. Retain hashed assets needed by open tabs.
-3. Replace the domain, certificate paths and upstream port in `nginx.conf.example`. Provision DNS, valid TLS and the intended Oracle/OS HTTPS ingress.
+3. Replace the domain, certificate paths and upstream port in `nginx.conf.example`. Port 3000 matches the audited server default; use the actual service's `PORT`. Provision DNS, valid TLS and the intended Oracle/OS HTTPS ingress.
 4. Run server v1 bound to loopback under its own service manager. Add the exact public website origin to `WEBSITE_ORIGINS`; the development origin is http://127.0.0.1:4180.
 5. Apply OS-appropriate read permissions and SELinux labels. Run `sudo nginx -t`, then reload Nginx only after it passes.
 
