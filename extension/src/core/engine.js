@@ -1,14 +1,17 @@
 // 引擎：規劃 → 路由 → 平行執行 → 委派 → 整合。全程在擴充功能內執行，不需要後端。
 import { AGENT_TYPES, SAFETY_PROMPT } from './catalog.js';
 import { ProviderError } from '../providers/types.js';
-import { BROWSER_TOOLS, BROWSER_TOOL_NAMES, DELEGATE_TOOL, WORKSPACE_TOOLS, browserToolRisk, validateToolArgs } from './tools.js';
+import { BROWSER_TOOLS, BROWSER_TOOL_NAMES, DELEGATE_TOOL, MESH_ASK_TOOL, WORKSPACE_TOOLS, browserToolRisk, validateToolArgs } from './tools.js';
 import { estimateCost, parseMentions, pickCandidates } from './router.js';
-import { PLANNER_SYSTEM, fallbackPlan, parsePlan } from './planner.js';
+import { PLANNER_SYSTEM, fallbackPlan, parsePlan, plannerDeviceRules } from './planner.js';
 
 const MAX_DELEGATION_DEPTH = 2;
 const MAX_DELEGATIONS_PER_RUN = 6;
 const MAX_PARALLEL = 3;
 const DEP_RESULT_LIMIT = 12000;
+const MAX_MESH_QUESTIONS_PER_RUN = 5;
+const DISPATCH_GOAL_LIMIT = 18000;
+const DISPATCH_CONTEXT_LIMIT = 150000;
 const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 class CancelledError extends Error {}
@@ -21,7 +24,7 @@ const slug = (s) => s.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '').sli
 const untrusted = (label, text) =>
   `<untrusted_content source="${label}">\n${String(text).replaceAll('</untrusted_content', '<\\/untrusted_content')}\n</untrusted_content>`;
 
-export function createEngine({ store, providers, browser, keys = store.keys }) {
+export function createEngine({ store, providers, browser, keys = store.keys, mesh = null }) {
   const listeners = new Set();
   const active = new Map();
   const finished = new Map();
@@ -153,10 +156,13 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
     const contextSummary = s.context.map((c) => `- ${c.type}${c.url ? `（${c.url}）` : ''}`).join('\n') || '（無）';
     const hint = mentions.agents.length > 1 ? `\n使用者指定要用這些 agent：${mentions.agents.join('、')}` : '';
     const prompt = `使用者目標：\n${s.goal}${hint}\n\n使用者提供的情境類型：\n${contextSummary}`;
+    // 被派工的子任務不再往外派，避免裝置之間互相派工形成迴圈
+    s.devices = s.options.dispatchId ? [] : await listMeshDevices();
+    const plannerSystem = s.devices.length ? `${PLANNER_SYSTEM}${plannerDeviceRules(s.devices)}` : PLANNER_SYSTEM;
     for (const candidate of candidatesFor(s, 'planning')) {
       try {
         const res = await turn(s, candidate, {
-          system: PLANNER_SYSTEM,
+          system: plannerSystem,
           messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
           maxTokens: 4000, effort: 'medium',
         });
@@ -170,9 +176,21 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
     return fallbackPlan(s.goal, s.context.some((c) => c.type === 'page' || c.type === 'element'));
   }
 
+  // 取得裝置清單失敗不可影響本機任務
+  async function listMeshDevices() {
+    if (!mesh) return [];
+    try {
+      return (await mesh.listDevices()).filter((d) => d.online && d.acceptRemote !== 'off');
+    } catch (err) {
+      console.warn('CueMesh：無法取得裝置清單，改為只在本機執行', err);
+      return [];
+    }
+  }
+
   const estimatePlan = (s, plan) => {
     let total = 0;
     for (const task of plan.tasks) {
+      if (task.device) continue; // 費用由執行的裝置負擔
       const [first] = candidatesFor(s, task.agent, s.forced.get(task.key));
       const turns = AGENT_TYPES[task.agent].estimatedTurns;
       total += estimateCost(first?.info, 6000 * turns, 1500 * turns);
@@ -226,9 +244,10 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
 
   // ---------- 工具 ----------
 
-  function toolsFor(job) {
+  function toolsFor(s, job) {
     const def = AGENT_TYPES[job.agentType];
     const tools = [...WORKSPACE_TOOLS];
+    if (mesh && s.options.dispatchId) tools.push(MESH_ASK_TOOL);
     if (def.usesBrowser) tools.push(...BROWSER_TOOLS);
     if (job.depth < MAX_DELEGATION_DEPTH) tools.push(DELEGATE_TOOL);
     return tools;
@@ -283,6 +302,61 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
     }
   }
 
+  // 子 agent 向主 agent 確認；回覆來自另一台裝置，只能當資料
+  async function askParent(s, job, question) {
+    if (s.meshQuestions >= MAX_MESH_QUESTIONS_PER_RUN) throw new Error('向主 agent 確認的次數已達上限，請依現有資訊判斷或回報');
+    s.meshQuestions += 1;
+    emit(s, 'mesh_question', { taskId: job.taskId, dispatchId: s.options.dispatchId, text: question, direction: 'outgoing' });
+    const answer = await abortable(s, mesh.ask({ dispatchId: s.options.dispatchId, text: question, signal: s.controller.signal }));
+    emit(s, 'mesh_answer', { taskId: job.taskId, dispatchId: s.options.dispatchId, text: answer, direction: 'incoming' });
+    return untrusted('main_agent', answer);
+  }
+
+  // 把任務交給其他裝置的子 agent，等到對方回報才算完成
+  async function runRemote(s, record, deps) {
+    const { spec, id } = record;
+    const device = s.devices?.find((d) => d.id === spec.device || d.name === spec.device);
+    // 不可退回本機執行：那會在使用者沒預期的瀏覽器上操作
+    if (!device) throw new Error(`裝置「${spec.device}」目前不在線或不接受派工`);
+
+    setTask(s, id, { status: 'running', device: device.name, startedAt: Date.now() });
+    const base = { taskId: id, device: device.name, owner: device.ownerName, mine: Boolean(device.mine) };
+    emit(s, 'mesh_dispatch', { ...base, status: 'pending', text: spec.instructions });
+
+    const depText = deps.map((d) => `# 前置工作「${d.spec.title}」的成果\n${untrusted('agent_result', depResult(s, d))}`).join('\n\n');
+    const goal = `${spec.instructions}\n\n# 主任務的整體目標\n${s.goal}${depText ? `\n\n${depText}` : ''}`.slice(0, DISPATCH_GOAL_LIMIT);
+    let budget = DISPATCH_CONTEXT_LIMIT;
+    const context = [];
+    if (spec.useContext) {
+      // 截圖不跨裝置傳送，只傳文字情境
+      for (const { type, text, url, title } of s.context) {
+        if (!text || text.length > budget) continue;
+        budget -= text.length;
+        context.push({ type, text, url, title });
+      }
+    }
+
+    const report = await abortable(s, mesh.dispatch({
+      targetDeviceId: device.id,
+      projectId: s.projectId,
+      goal,
+      context,
+      options: { maxCostUsd: Math.max(0.01, s.maxCostUsd - s.cost) },
+      parent: { runId: s.runId, taskId: id },
+      signal: s.controller.signal,
+      onUpdate: (d) => emit(s, 'mesh_dispatch', { ...base, status: d.status, dispatchId: d.id }),
+    }));
+    emit(s, 'mesh_report', { ...base, status: report.status, text: report.summary || report.result || report.error || '', costUsd: report.costUsd ?? 0 });
+
+    if (!['done', 'partial'].includes(report.status)) {
+      throw new Error(`裝置「${device.name}」沒有完成（${report.status}）${report.error ? `：${report.error}` : ''}`);
+    }
+    const result = report.result || report.summary || '（對方沒有提供內容）';
+    const sources = report.sources ?? [];
+    setTask(s, id, { status: 'done', result, sources, finishedAt: Date.now() });
+    return { result, sources };
+  }
+
   async function browserCall(s, job, call) {
     const risk = browserToolRisk(call.name);
     const payload = await abortable(s, browser.execute({ runId: s.runId, tabId: s.tabId, tool: call.name, args: call.args }));
@@ -310,6 +384,7 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
     try {
       if (BROWSER_TOOL_NAMES.has(call.name)) return { ...base, ...(await browserCall(s, job, call)) };
       if (call.name === 'delegate') return { ...base, text: await delegate(s, job, call.args) };
+      if (call.name === 'mesh_ask') return { ...base, text: await askParent(s, job, call.args.question) };
       return { ...base, text: workspaceTool(s, job, call) };
     } catch (err) {
       if (isStop(s, err)) throw err;
@@ -321,7 +396,7 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
 
   async function agentLoop(s, job, candidate) {
     const def = AGENT_TYPES[job.agentType];
-    const tools = toolsFor(job);
+    const tools = toolsFor(s, job);
     const messages = [{ role: 'user', content: contextPackage(s, job, candidate) }];
     const sources = new Map();
 
@@ -405,7 +480,12 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
             forcedProvider: s.forced.get(r.spec.key), depth: 0, holdsBrowser: AGENT_TYPES[r.spec.agent].usesBrowser,
           };
           const exec = () => runAgent(s, job);
-          const promise = (AGENT_TYPES[r.spec.agent].usesBrowser ? withBrowserLock(s, exec) : exec())
+          const remote = Boolean(r.spec.device) && Boolean(mesh);
+          // 派到別台裝置的工作不占用這台的瀏覽器鎖
+          const started = remote
+            ? runRemote(s, r, deps)
+            : AGENT_TYPES[r.spec.agent].usesBrowser ? withBrowserLock(s, exec) : exec();
+          const promise = started
             .then((out) => { r.status = 'done'; Object.assign(r, out); })
             .catch((err) => {
               // 取消與超預算會結束整個任務；一般失敗只影響依賴它的工作
@@ -513,6 +593,35 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
     }
   }
 
+  // 主 agent 端：子 agent 來問問題時，用規劃模型依整體目標回答
+  mesh?.onQuestion?.(async (question) => {
+    const fallback = '主 agent 目前無法回答，請依任務說明自行判斷；無法判斷時請回報，不要猜測。';
+    const s = active.get(question.parent?.runId);
+    if (!s) {
+      await mesh.answer({ dispatchId: question.dispatchId, replyTo: question.messageId, text: '主任務已經結束，請依任務說明完成並回報。' });
+      return;
+    }
+    const taskId = question.parent.taskId;
+    emit(s, 'mesh_question', { taskId, dispatchId: question.dispatchId, text: question.text, direction: 'incoming' });
+    let text = fallback;
+    for (const candidate of candidatesFor(s, 'planning')) {
+      try {
+        const res = await turn(s, candidate, {
+          system: `你是主 agent，正在協調其他裝置上的子 agent。依使用者的整體目標簡短回答子 agent 的問題；不知道就直說，不要猜。你不能代替使用者授權付款、刪除或送出等動作。\n\n${SAFETY_PROMPT}`,
+          messages: [{ role: 'user', content: [{ type: 'text', text: `使用者的整體目標：\n${s.goal}\n\n子 agent 的問題：\n${untrusted('sub_agent', question.text)}` }] }],
+          maxTokens: 1000, effort: 'low',
+        });
+        account(s, candidate, res.usage);
+        if (res.text?.trim()) { text = res.text; break; }
+      } catch (err) {
+        if (isStop(s, err)) break;
+        emit(s, 'fallback', { stage: 'mesh_answer', provider: candidate.provider, model: candidate.model, reason: err.message });
+      }
+    }
+    emit(s, 'mesh_answer', { taskId, dispatchId: question.dispatchId, text, direction: 'outgoing' });
+    await mesh.answer({ dispatchId: question.dispatchId, replyTo: question.messageId, text });
+  });
+
   return {
     start({ projectId, goal, context = [], options = {} }) {
       if (!goal?.trim()) throw new Error('請輸入要完成的目標');
@@ -524,7 +633,7 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
       // 情境中的截圖只留在記憶體，不存進 chrome.storage，避免大量圖片占滿儲存空間
       const storedContext = context.map(({ image, ...rest }) => ({ ...rest, hasImage: Boolean(image) }));
       store.insertRun({
-        id: runId, projectId, goal, status: 'planning', mode, workflowId: options.workflowId ?? null, maxCostUsd, planSummary: '', finalResult: null, error: null,
+        id: runId, projectId, goal, status: 'planning', mode, workflowId: options.workflowId ?? null, dispatchId: options.dispatchId ?? null, maxCostUsd, planSummary: '', finalResult: null, error: null,
         costUsd: 0, inputTokens: 0, outputTokens: 0, createdAt: now, finishedAt: null,
         context: storedContext, tasks: [], artifacts: [], events: [],
       });
@@ -532,7 +641,7 @@ export function createEngine({ store, providers, browser, keys = store.keys }) {
         runId, projectId, goal, context, mode, options, maxCostUsd, seq: 0,
         tabId: context.find((c) => Number.isInteger(c.tabId))?.tabId ?? null,
         controller: new AbortController(), browserTail: Promise.resolve(),
-        cost: 0, delegations: 0, forced: new Map(), available: [],
+        cost: 0, delegations: 0, meshQuestions: 0, devices: [], forced: new Map(), available: [],
       };
       active.set(runId, s);
       finished.set(runId, execute(s));

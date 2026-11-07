@@ -301,3 +301,145 @@ test('重新開啟時，上次未結束的任務標記為中斷', async () => {
   assert.equal(run.status, 'failed');
   assert.equal(run.tasks[0].status, 'failed');
 });
+
+// ---- 跨裝置協作 ----
+function fakeMesh({ devices = [{ id: 'd2', name: '家裡的電腦', ownerName: 'Harry', mine: true, online: true, acceptRemote: 'ask' }], report } = {}) {
+  const m = {
+    dispatched: [], answers: [], asked: [], questionHandler: null,
+    async listDevices() { return devices; },
+    async dispatch(req) { m.dispatched.push(req); req.onUpdate?.({ id: 'x1', status: 'accepted' }); return typeof report === 'function' ? report(req) : report ?? { status: 'done', summary: '摘要', result: '對方完成了', sources: [{ title: 's', url: 'https://a.test' }], costUsd: 0.01 }; },
+    async ask(req) { m.asked.push(req); return '主 agent 說：用藍色'; },
+    onQuestion(fn) { m.questionHandler = fn; },
+    async answer(a) { m.answers.push(a); },
+  };
+  return m;
+}
+
+async function setupMesh(mesh, script, keys = ['anthropic']) {
+  const store = await createStore({ kv: memoryKv() });
+  for (const k of keys) await store.setKey(k, 'k');
+  const project = await store.createProject({ name: 'p' });
+  const anthropic = fakeProvider('anthropic', script);
+  const engine = createEngine({ store, providers: { anthropic }, mesh });
+  const events = [];
+  engine.subscribe((e) => events.push(e));
+  const run = async (goal, options = {}) => {
+    const runId = engine.start({ projectId: project.id, goal, options });
+    await engine.waitForRun(runId);
+    return engine.getRun(runId);
+  };
+  return { engine, anthropic, events, run, project };
+}
+
+test('主 agent 把任務派給其他裝置，對方回報後由 review 確認再整合', async () => {
+  const mesh = fakeMesh();
+  const t = await setupMesh(mesh, (params) => {
+    if (params.system.includes('任務規劃器')) {
+      assert.match(params.system, /家裡的電腦/);
+      return plan([
+        { id: 't1', title: '家裡查訂單', agent: 'browser', instructions: '查訂單', dependsOn: [], device: 'd2' },
+        { id: 't2', title: '確認', agent: 'review', instructions: '檢查', dependsOn: ['t1'] },
+      ]);
+    }
+    if (params.system.includes('審查')) { assert.match(params.messages[0].content[0].text, /對方完成了/); return text('確認無誤'); }
+    return text('最終整合');
+  });
+  const run = await t.run('用家裡的電腦查訂單');
+  assert.equal(run.status, 'done');
+  assert.equal(mesh.dispatched[0].targetDeviceId, 'd2');
+  assert.equal(mesh.dispatched[0].parent.runId, run.id);
+  assert.equal(run.tasks[0].device, '家裡的電腦');
+  assert.ok(t.events.some((e) => e.type === 'mesh_report' && e.payload.status === 'done'));
+  assert.deepEqual(t.events.filter((e) => e.type === 'mesh_dispatch').map((e) => e.payload.status), ['pending', 'accepted']);
+});
+
+test('派工被拒絕時任務失敗，後續工作略過，且不會改在本機執行', async () => {
+  const mesh = fakeMesh({ report: () => ({ status: 'rejected', error: '對方拒絕' }) });
+  const t = await setupMesh(mesh, (params) => (params.system.includes('任務規劃器')
+    ? plan([{ id: 't1', title: '遠端', agent: 'browser', instructions: 'x', dependsOn: [], device: 'd2' }])
+    : text('不該被呼叫')));
+  const run = await t.run('派出去');
+  assert.equal(run.status, 'failed');
+  assert.match(run.error, /對方拒絕/);
+  assert.equal(t.anthropic.calls.length, 1);
+});
+
+test('計畫指定不在線的裝置時明確失敗，不會默默改用本機瀏覽器', async () => {
+  const mesh = fakeMesh({ devices: [{ id: 'd2', name: '離線', online: false, acceptRemote: 'ask' }] });
+  const t = await setupMesh(mesh, (params) => (params.system.includes('任務規劃器')
+    ? plan([{ id: 't1', title: '遠端', agent: 'browser', instructions: 'x', dependsOn: [], device: 'd2' }])
+    : text('不該被呼叫')));
+  const run = await t.run('派出去');
+  assert.equal(run.status, 'failed');
+  assert.match(run.error, /不在線/);
+});
+
+test('子任務可向主 agent 確認，回覆被標為不可信；次數有上限', async () => {
+  const mesh = fakeMesh();
+  let n = 0;
+  const t = await setupMesh(mesh, (params) => {
+    const last = params.messages.at(-1);
+    if (last.role === 'tool') {
+      if (!last.results[0].isError) assert.match(last.results[0].text, /untrusted_content/);
+      else assert.match(last.results[0].text, /上限/);
+      return n >= 7 ? text('完成') : call('mesh_ask', { question: `第 ${(n += 1)} 問` });
+    }
+    n += 1;
+    return call('mesh_ask', { question: '要用什麼顏色？' });
+  });
+  const run = await t.run('@coding 做按鈕', { dispatchId: 'x9' });
+  assert.equal(run.status, 'done');
+  assert.equal(run.dispatchId, 'x9');
+  assert.equal(mesh.asked.length, 5);
+  assert.equal(mesh.asked[0].dispatchId, 'x9');
+  assert.ok(t.events.some((e) => e.type === 'mesh_answer' && e.payload.text.includes('藍色')));
+});
+
+test('被派工的子任務不會再往外派，一般任務沒有 mesh_ask', async () => {
+  const mesh = fakeMesh();
+  const t = await setupMesh(mesh, (params) => {
+    if (params.system.includes('任務規劃器')) {
+      assert.doesNotMatch(params.system, /可派工的其他裝置/);
+      return plan([{ id: 't1', title: '本機', agent: 'coding', instructions: 'x', dependsOn: [] }]);
+    }
+    return text('完成');
+  });
+  await t.run('多步驟的事', { dispatchId: 'x9' });
+  assert.equal(mesh.dispatched.length, 0);
+
+  const plain = await setupMesh(fakeMesh(), (params) => {
+    assert.ok(!params.tools?.some((tool) => tool.name === 'mesh_ask'));
+    return text('完成');
+  });
+  await plain.run('@coding 寫');
+});
+
+test('主 agent 自動回答子 agent 的提問；主任務已結束時也有明確回覆', async () => {
+  const mesh = fakeMesh({ report: async (req) => {
+    await mesh.questionHandler({ dispatchId: 'x1', messageId: 'm1', text: '要哪個版本？', parent: req.parent });
+    return { status: 'done', result: '好了' };
+  } });
+  const t = await setupMesh(mesh, (params) => {
+    if (params.system.includes('任務規劃器')) return plan([{ id: 't1', title: '遠端', agent: 'coding', instructions: 'x', dependsOn: [], device: 'd2' }]);
+    if (params.system.includes('你是主 agent')) { assert.match(params.messages[0].content[0].text, /untrusted_content/); return text('用最新版'); }
+    return text('整合');
+  });
+  await t.run('派出去');
+  assert.deepEqual(mesh.answers[0], { dispatchId: 'x1', replyTo: 'm1', text: '用最新版' });
+  await mesh.questionHandler({ dispatchId: 'x2', messageId: 'm2', text: '還在嗎', parent: { runId: 'nope' } });
+  assert.match(mesh.answers[1].text, /已經結束/);
+});
+
+test('裝置清單取得失敗時不影響本機任務；沒有 mesh 時規劃器看不到派工規則', async () => {
+  const mesh = fakeMesh();
+  mesh.listDevices = async () => { throw new Error('斷線'); };
+  const t = await setupMesh(mesh, (params) => {
+    if (params.system.includes('任務規劃器')) {
+      assert.doesNotMatch(params.system, /可派工的其他裝置/);
+      return plan([{ id: 't1', title: '本機', agent: 'coding', instructions: 'x', dependsOn: [] }]);
+    }
+    return text('完成');
+  });
+  const run = await t.run('做事');
+  assert.equal(run.status, 'done');
+});

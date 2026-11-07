@@ -200,9 +200,10 @@ export function createBrowserController({
     return response;
   }
 
-  function approvalMode() {
+  function approvalMode(runId) {
     try {
-      return getApprovalMode?.() === 'risky' ? 'risky' : 'always';
+      // 依任務判斷：其他帳號派來的任務即使設定為 risky 也要逐步批准
+      return getApprovalMode?.({ runId }) === 'risky' ? 'risky' : 'always';
     } catch {
       // 無法讀取設定時使用最嚴格模式，避免因設定錯誤而繞過批准。
       return 'always';
@@ -210,7 +211,7 @@ export function createBrowserController({
   }
 
   async function request({ runId, tab, tool, args, assessment, element }) {
-    if (!approvalRequired(assessment.risk, approvalMode())) return { ok: true };
+    if (!approvalRequired(assessment.risk, approvalMode(runId))) return { ok: true };
     if (typeof requestApproval !== 'function') return failure('尚未設定使用者批准介面', { denied: true });
 
     try {
