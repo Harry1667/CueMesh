@@ -1,0 +1,8 @@
+{
+  "user": {
+    "id": "demo-user",
+    "email": "demo@example.com",
+    "displayName": "Ethan",
+    "createdAt": 1794009600000
+  }
+}

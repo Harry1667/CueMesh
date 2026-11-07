@@ -1,0 +1,129 @@
+{
+  "run": {
+    "id": "demo-run-2",
+    "projectId": "demo-materials",
+    "goal": "Review the reference.",
+    "status": "partial",
+    "mode": "council",
+    "planSummary": "Compare two viewpoints and collect the useful disagreements.",
+    "finalResult": "The layout review is complete. The second viewpoint could not be retrieved, so this run is only partially complete.",
+    "error": "Example: the second provider reached its request limit.",
+    "costUsd": 0.0042,
+    "inputTokens": 700,
+    "outputTokens": 340,
+    "createdAt": 1794016800000,
+    "finishedAt": 1794016880000,
+    "tasks": [
+      {
+        "id": "task-research",
+        "runId": "demo-run-2",
+        "parentTaskId": null,
+        "title": "Establish the direction",
+        "agent": "research",
+        "status": "done",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "result": "Keep the first iteration focused on three material families, readable details, and a single interaction surface. This text is sample content.",
+        "sources": [
+          {
+            "title": "Project source repository",
+            "url": "https://github.com/Harry1667/CueMesh"
+          }
+        ],
+        "error": null,
+        "startedAt": 1794016800000,
+        "finishedAt": 1794016824000
+      },
+      {
+        "id": "task-build",
+        "runId": "demo-run-2",
+        "parentTaskId": "task-research",
+        "title": "Shape the first version",
+        "agent": "coding",
+        "status": "done",
+        "provider": "anthropic",
+        "model": "claude-opus-5-5",
+        "result": "A sample layout review is complete. No artifact is attached to this partial run.",
+        "sources": [],
+        "error": null,
+        "startedAt": 1794016824000,
+        "finishedAt": 1794016872000
+      },
+      {
+        "id": "task-review",
+        "runId": "demo-run-2",
+        "parentTaskId": "task-build",
+        "title": "Close the loop",
+        "agent": "review",
+        "status": "failed",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "result": null,
+        "sources": [],
+        "error": "Example provider request limit.",
+        "startedAt": 1794016872000,
+        "finishedAt": 1794016880000
+      }
+    ],
+    "events": [
+      {
+        "seq": 1,
+        "runId": "demo-run-2",
+        "type": "plan",
+        "payload": {
+          "summary": "Compare two viewpoints and collect the useful disagreements.",
+          "tasks": [],
+          "estimatedCostUsd": 0.02
+        },
+        "createdAt": 1794016800000
+      },
+      {
+        "seq": 2,
+        "runId": "demo-run-2",
+        "type": "agent_message",
+        "payload": {
+          "taskId": "task-research",
+          "text": "I’ll keep the initial scope to three material families."
+        },
+        "createdAt": 1794016815000
+      },
+      {
+        "seq": 3,
+        "runId": "demo-run-2",
+        "type": "mention",
+        "payload": {
+          "fromTaskId": "task-research",
+          "fromAgent": "research",
+          "toTaskId": "task-build",
+          "agent": "coding",
+          "request": "Use the shared direction notes for the first interface."
+        },
+        "createdAt": 1794016824000
+      },
+      {
+        "seq": 5,
+        "runId": "demo-run-2",
+        "type": "mention",
+        "payload": {
+          "fromTaskId": "task-build",
+          "fromAgent": "coding",
+          "toTaskId": "task-review",
+          "agent": "review",
+          "request": "Check the result against the initial brief."
+        },
+        "createdAt": 1794016873000
+      },
+      {
+        "seq": 6,
+        "runId": "demo-run-2",
+        "type": "run_finished",
+        "payload": {
+          "status": "partial",
+          "error": "Example: the second provider reached its request limit."
+        },
+        "createdAt": 1794016880000
+      }
+    ],
+    "artifacts": []
+  }
+}

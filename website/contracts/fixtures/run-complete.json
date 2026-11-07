@@ -1,0 +1,159 @@
+{
+  "run": {
+    "id": "demo-run-1",
+    "projectId": "demo-materials",
+    "goal": "Build a materials explorer.",
+    "status": "done",
+    "mode": "auto",
+    "planSummary": "Research → Build → Review.",
+    "finalResult": "Preview + direction notes.\n\nAuthored sample files. No agents ran in this demo.",
+    "error": null,
+    "costUsd": 0.0184,
+    "inputTokens": 2400,
+    "outputTokens": 1650,
+    "createdAt": 1794020400000,
+    "finishedAt": 1794020496000,
+    "tasks": [
+      {
+        "id": "task-research",
+        "runId": "demo-run-1",
+        "parentTaskId": null,
+        "title": "Establish the direction",
+        "agent": "research",
+        "status": "done",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "result": "Keep the first iteration focused on three material families, readable details, and a single interaction surface. This text is sample content.",
+        "sources": [
+          {
+            "title": "Project source repository",
+            "url": "https://github.com/Harry1667/CueMesh"
+          }
+        ],
+        "error": null,
+        "startedAt": 1794020400000,
+        "finishedAt": 1794020424000
+      },
+      {
+        "id": "task-build",
+        "runId": "demo-run-1",
+        "parentTaskId": "task-research",
+        "title": "Shape the first version",
+        "agent": "coding",
+        "status": "done",
+        "provider": "anthropic",
+        "model": "claude-opus-5-5",
+        "result": "A static reference artifact is attached to illustrate the result view. This is authored sample content, not generated work.",
+        "sources": [],
+        "error": null,
+        "startedAt": 1794020424000,
+        "finishedAt": 1794020472000
+      },
+      {
+        "id": "task-review",
+        "runId": "demo-run-1",
+        "parentTaskId": "task-build",
+        "title": "Close the loop",
+        "agent": "review",
+        "status": "done",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "result": "The example review notes the need for keyboard navigation, source attribution, and real testing before release. This is not a recorded test result.",
+        "sources": [],
+        "error": null,
+        "startedAt": 1794020472000,
+        "finishedAt": 1794020496000
+      }
+    ],
+    "events": [
+      {
+        "seq": 1,
+        "runId": "demo-run-1",
+        "type": "plan",
+        "payload": {
+          "summary": "Research → Build → Review.",
+          "tasks": [],
+          "estimatedCostUsd": 0.02
+        },
+        "createdAt": 1794020400000
+      },
+      {
+        "seq": 2,
+        "runId": "demo-run-1",
+        "type": "agent_message",
+        "payload": {
+          "taskId": "task-research",
+          "text": "I’ll keep the initial scope to three material families."
+        },
+        "createdAt": 1794020415000
+      },
+      {
+        "seq": 3,
+        "runId": "demo-run-1",
+        "type": "mention",
+        "payload": {
+          "fromTaskId": "task-research",
+          "fromAgent": "research",
+          "toTaskId": "task-build",
+          "agent": "coding",
+          "request": "Use the shared direction notes for the first interface."
+        },
+        "createdAt": 1794020424000
+      },
+      {
+        "seq": 4,
+        "runId": "demo-run-1",
+        "type": "artifact",
+        "payload": {
+          "artifactId": "artifact-html",
+          "name": "materials-preview.html",
+          "kind": "html",
+          "createdBy": "coding"
+        },
+        "createdAt": 1794020472000
+      },
+      {
+        "seq": 5,
+        "runId": "demo-run-1",
+        "type": "mention",
+        "payload": {
+          "fromTaskId": "task-build",
+          "fromAgent": "coding",
+          "toTaskId": "task-review",
+          "agent": "review",
+          "request": "Check the result against the initial brief."
+        },
+        "createdAt": 1794020473000
+      },
+      {
+        "seq": 6,
+        "runId": "demo-run-1",
+        "type": "run_finished",
+        "payload": {
+          "status": "done"
+        },
+        "createdAt": 1794020496000
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "artifact-html",
+        "runId": "demo-run-1",
+        "name": "materials-preview.html",
+        "kind": "html",
+        "content": "<style>body{margin:0;padding:32px;background:#f6f5fa;color:#151c33;font:14px system-ui}small{letter-spacing:.15em;color:#626a80}h1{font-size:34px;letter-spacing:-1.5px;font-weight:500}.samples{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.sample{border:1px solid #dee0eb;padding:14px;border-radius:5px}.shape{height:110px;background:#b5a5ef;border-radius:70% 40% 60% 45%;margin:10px}.sample:nth-child(2) .shape{background:#8095f0;border-radius:5px}.sample:nth-child(3) .shape{background:#d4d9ed;border-radius:50%}p{line-height:1.7;color:#626a80}@media(max-width:400px){body{padding:18px}.samples{grid-template-columns:1fr}.shape{height:60px}}</style><small>ILLUSTRATIVE ARTIFACT</small><h1>Materials, in perspective.</h1><div class=\"samples\"><div class=\"sample\"><div class=\"shape\"></div>Ceramic</div><div class=\"sample\"><div class=\"shape\"></div>Metal</div><div class=\"sample\"><div class=\"shape\"></div>Wood</div></div><p>A static composition demonstrating how an HTML artifact appears in CueMesh. It does not execute scripts.</p>",
+        "createdBy": "coding",
+        "createdAt": 1794020472000
+      },
+      {
+        "id": "artifact-notes",
+        "runId": "demo-run-1",
+        "name": "direction-notes.md",
+        "kind": "markdown",
+        "content": "# Direction notes\n\nThis sample keeps the first prototype intentionally small.\n\n- Three material families\n- A focused viewing area\n- Details available on selection\n- Keyboard navigation to be verified in the real implementation\n\nThese are illustrative notes, not results from a real research run.",
+        "createdBy": "research",
+        "createdAt": 1794020424000
+      }
+    ]
+  }
+}

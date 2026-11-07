@@ -1,0 +1,16 @@
+{
+  "projects": [
+    {
+      "id": "demo-materials",
+      "name": "Materials atlas",
+      "description": "Interactive material library.",
+      "createdAt": 1794020400000
+    },
+    {
+      "id": "demo-research",
+      "name": "Research notebook",
+      "description": "A place for source-backed comparisons.",
+      "createdAt": 1793934000000
+    }
+  ]
+}

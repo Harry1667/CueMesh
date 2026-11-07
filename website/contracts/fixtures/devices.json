@@ -1,0 +1,26 @@
+{
+  "devices": [
+    {
+      "id": "demo-front-device",
+      "userId": "demo-user",
+      "ownerName": "Ethan",
+      "name": "Frontend · Chrome",
+      "platform": "Windows",
+      "acceptRemote": "ask",
+      "online": true,
+      "lastSeenAt": 1794024000000,
+      "mine": true
+    },
+    {
+      "id": "demo-back-device",
+      "userId": "demo-harry",
+      "ownerName": "Harry",
+      "name": "Backend · Chrome",
+      "platform": "macOS",
+      "acceptRemote": "ask",
+      "online": false,
+      "lastSeenAt": 1794022200000,
+      "mine": false
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "dispatches": [
+    {
+      "id": "demo-dispatch",
+      "projectId": "demo-cuemesh-team",
+      "targetDeviceId": "demo-back-device",
+      "targetUserId": "demo-harry",
+      "senderUserId": "demo-user",
+      "senderName": "Ethan",
+      "senderDeviceId": "demo-front-device",
+      "crossAccount": true,
+      "goal": "Confirm the account API fields so the frontend and backend can connect.",
+      "context": [
+        {
+          "type": "selection",
+          "title": "Shared integration brief",
+          "text": "The frontend owns website/. Harry owns server/ and extension/. Use the server account and Bearer authentication. Website and extension approve work within their own permissions.",
+          "url": "https://github.com/Harry1667/CueMesh/blob/main/docs/cloud-api.md"
+        }
+      ],
+      "options": {
+        "maxCostUsd": 0.5
+      },
+      "parent": null,
+      "status": "accepted",
+      "runId": null,
+      "summary": "Sample handoff: backend interface review is in progress.",
+      "result": null,
+      "sources": [],
+      "error": null,
+      "costUsd": 0,
+      "createdAt": 1794022200000,
+      "updatedAt": 1794023700000,
+      "expiresAt": 1794024600000
+    }
+  ]
+}

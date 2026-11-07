@@ -1,0 +1,35 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Arial, sans-serif;
+  color: #151c33;
+  background: #f6f5fa;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --paper: #f6f5fa;
+  --surface: #ffffff;
+  --white: #ffffff;
+  --ink: #151c33;
+  --ink-deep: #151c33;
+  --muted: #626a80;
+  --line: #dee0eb;
+  --soft: #efecf9;
+  --lime: #b5a5ef;
+  --lime-hover: #a795e6;
+  --moss: #3659f5;
+  --accent: #3659f5;
+  --action: #3659f5;
+  --action-hover: #2947d6;
+  --danger: #a6352e;
+  --warning: #875c1c;
+  --radius: 6px;
+  --motion-fast: 150ms;
+  --motion-panel: 240ms;
+  --ease: cubic-bezier(0.22, 0.68, 0.1, 1);
+  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-fast: 0ms;
+    --motion-panel: 0ms;
+  }
+}

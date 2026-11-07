@@ -1,0 +1,33 @@
+# Template only. The repository owner can copy this to .github/workflows/website.yml.
+# Kept under website/ to respect the root README's directory ownership rule.
+name: Website
+on:
+  pull_request:
+    paths: ['website/**', '.github/workflows/website.yml']
+  push:
+    branches: [main]
+    paths: ['website/**', '.github/workflows/website.yml']
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install the pinned package manager
+        run: npm install --global pnpm@11.25.0
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm contract:check
+      - run: pnpm format:check
+      - run: pnpm build
