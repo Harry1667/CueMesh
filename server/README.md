@@ -1,6 +1,6 @@
 # CueMesh 雲端協作伺服器
 
-這是 CueMesh 的帳號、專案同步、派工與 SSE 伺服器。它使用 Node ESM、Express 與 Node 內建的 `node:sqlite`，不需要原生 PostgreSQL npm 套件。
+這是 CueMesh 的帳號、專案同步、派工與 SSE 伺服器。它使用 Node ESM、Express 與 PostgreSQL（透過 `pg`）。
 
 ## 安全與資料範圍
 
@@ -12,13 +12,13 @@
 
 ## 本機啟動
 
-需要 Node.js 24 以上（必須提供 `node:sqlite`）。
+需要 Node.js 24 以上與一個 PostgreSQL 資料庫；用 Docker Compose 會自動建立專用容器。
 
 ```bash
 cd server
 cp .env.example .env
 npm install
-DATABASE_URL=./data/cuemesh.sqlite npm start
+DATABASE_URL=postgres://使用者:密碼@127.0.0.1:5432/cuemesh npm start
 ```
 
 環境變數：

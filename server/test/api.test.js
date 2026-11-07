@@ -198,6 +198,27 @@ async function readSseUntil(reader, predicate, timeoutMs = 2_000) {
   throw new Error('等待 SSE 事件逾時');
 }
 
+test('任務列表包含最終結果與錯誤欄位，供網站顯示', async () => {
+  const context = await start();
+  const alice = await register(context, 'alice@example.test', 'Alice');
+  const project = await createProject(context, alice);
+  const body = { projectId: project.id, goal: '目標', status: 'done', mode: 'auto', finalResult: '完成', createdAt: 1, tasks: [] };
+  assert.equal((await api(context, '/api/runs/run-list', { method: 'PUT', token: alice.token, body })).status, 200);
+  const { runs } = (await api(context, `/api/projects/${project.id}/runs`, { token: alice.token })).body;
+  assert.equal(runs[0].finalResult, '完成');
+  assert.equal(runs[0].error, null);
+});
+
+test('API 入口與健康檢查不需登入，且不帶帳號資料', async () => {
+  const context = await start();
+  for (const path of ['/api', '/api/', '/api/health']) {
+    const result = await api(context, path);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { service: 'CueMesh API', version: 'v1', status: 'ok' });
+  }
+  assert.equal((await api(context, '/api/does-not-exist')).status, 404);
+});
+
 test('帳號驗證只儲存雜湊，登入失敗不洩漏 Email 是否存在', async () => {
   const context = await start({ rateLimits: { authMax: 10 } });
   const alice = await register(context, 'alice@example.test', 'Alice');

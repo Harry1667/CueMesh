@@ -40,14 +40,13 @@ function deviceJson(row, online, currentUserId) {
   };
 }
 
-function runJson(row, { full = false } = {}) {
-  const output = {
+function runJson(row) {
+  return {
     id: row.id, projectId: row.project_id, goal: row.goal, status: row.status, mode: row.mode,
-    planSummary: row.plan_summary, costUsd: row.cost_usd, inputTokens: row.input_tokens,
-    outputTokens: row.output_tokens, createdAt: row.created_at, finishedAt: row.finished_at, deviceId: row.device_id,
+    planSummary: row.plan_summary, finalResult: row.final_result, error: row.error,
+    costUsd: row.cost_usd, inputTokens: row.input_tokens, outputTokens: row.output_tokens,
+    createdAt: row.created_at, finishedAt: row.finished_at, deviceId: row.device_id,
   };
-  if (full) Object.assign(output, { finalResult: row.final_result, error: row.error });
-  return output;
 }
 
 function taskJson(row) {
@@ -483,6 +482,14 @@ export async function createApp(options = {}) {
     next();
   });
 
+  // 給人與監控看的入口：直接開 /api 或 /api/ 時回服務狀態，不洩漏任何帳號資料。
+  const serviceInfo = asyncRoute(async (_request, response) => {
+    await database.one('SELECT 1 AS ok');
+    response.json({ service: 'CueMesh API', version: 'v1', status: 'ok' });
+  });
+  app.get('/api', serviceInfo);
+  app.get('/api/health', serviceInfo);
+
   app.post('/api/auth/register', asyncRoute(async (request, response) => {
     enforceRate('auth', request.ip);
     const body = requireObject(request.body);
@@ -811,7 +818,7 @@ export async function createApp(options = {}) {
       await emitProject(queue, run.project_id, 'run_update', { runId: id, status: run.status });
       return { run, tasks };
     });
-    response.json({ run: { ...runJson(output.run, { full: true }), tasks: output.tasks.map(taskJson) } });
+    response.json({ run: { ...runJson(output.run), tasks: output.tasks.map(taskJson) } });
   }));
 
   app.post('/api/runs/:id/events', authenticate, asyncRoute(async (request, response) => {
@@ -887,7 +894,7 @@ export async function createApp(options = {}) {
       return { seq: row.seq, runId: row.run_id, type: row.type, payload, createdAt: row.created_at };
     });
     const artifacts = await database.many('SELECT * FROM artifacts WHERE run_id = $1 ORDER BY created_at ASC', [run.id]);
-    response.json({ run: { ...runJson(run, { full: true }), tasks: tasks.map(taskJson), events, artifacts: artifacts.map(artifactJson) } });
+    response.json({ run: { ...runJson(run), tasks: tasks.map(taskJson), events, artifacts: artifacts.map(artifactJson) } });
   }));
 
   app.post('/api/dispatches', authenticate, asyncRoute(async (request, response) => {
