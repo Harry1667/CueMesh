@@ -29,7 +29,7 @@ const options = {
 await rm(out, { recursive: true, force: true });
 await mkdir(out, { recursive: true });
 await cp(join(root, 'public'), out, { recursive: true });
-for (const file of ['sidepanel.html']) {
+for (const file of ['sidepanel.html', 'preview-sandbox.html']) {
   const source = join(root, 'src/ui', file);
   if (!existsSync(source)) throw new Error(`找不到 ${source}`);
   await cp(source, join(out, file));

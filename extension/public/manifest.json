@@ -8,9 +8,10 @@
   "background": { "service_worker": "background.js", "type": "module" },
   "side_panel": { "default_path": "sidepanel.html" },
   "permissions": ["sidePanel", "scripting", "tabs", "storage", "unlimitedStorage", "contextMenus"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "host_permissions": ["<all_urls>"],
+  "sandbox": { "pages": ["preview-sandbox.html"] },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'none'; frame-src 'self'"
-  },
-  "web_accessible_resources": []
+    "extension_pages": "script-src 'self'; object-src 'none'; frame-src 'self'",
+    "sandbox": "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src https://cdn.jsdelivr.net; worker-src blob:"
+  }
 }
