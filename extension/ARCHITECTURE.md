@@ -116,3 +116,68 @@ await store.getStats();                        // 各模型在各工作類型的
 ## 介面五：UI（`src/ui/`）
 
 入口 `src/ui/sidepanel.html` 與 `src/ui/sidepanel.js`，打包到 `dist/sidepanel.html`、`dist/sidepanel.js`、`dist/sidepanel.css`。`src/ui/app.js` 匯出 `mountApp(root, { engine, store, browser, providers })`，方便用假物件測試；`sidepanel.js` 組裝真實物件後呼叫它，並把 `requestApproval` 接到 UI 的批准對話框。
+
+## 雲端與協作（新增）
+
+API 規格：`docs/cloud-api.md`。沒登入時擴充功能照常單機運作，雲端故障不可影響本機任務。
+
+| 目錄 | 負責人 |
+|---|---|
+| `server/`（repo 根目錄） | Codex A |
+| `src/cloud/`、`test/cloud/` | Codex B |
+| `src/ui/`、`test/ui/` | Claude UI |
+| `src/core/`（含跨裝置協作） | 整合者 Claude |
+
+### 介面六：雲端（`src/cloud/index.js`，Codex B）
+
+```js
+const cloud = await createCloud({ kv, fetchImpl = fetch, baseUrl });
+// 帳號
+await cloud.register({ email, password, displayName }); await cloud.login({ email, password }); await cloud.logout();
+cloud.getUser();                // 目前使用者或 null
+cloud.getDevice();              // 這台裝置 { id, name, ... }
+await cloud.renameDevice(name); await cloud.setAcceptRemote('off' | 'ask' | 'auto');
+cloud.getBaseUrl(); await cloud.setBaseUrl(url);
+cloud.getStatus();              // 'signed_out' | 'connecting' | 'online' | 'offline'
+const off = cloud.subscribe((cloudEvent) => {});  // 伺服器事件，與 { type: 'status', status }
+await cloud.listDevices();
+// 共享
+await cloud.listProjects(); await cloud.createInvite(projectId); await cloud.acceptInvite(code);
+await cloud.listMembers(projectId); await cloud.removeMember(projectId, userId);
+// 金鑰保險箱：密語永遠不離開這台裝置
+await cloud.vaultStatus();      // { exists, updatedAt }
+await cloud.vaultPush(passphrase);    // 把 store 內的 key 加密上傳
+await cloud.vaultPull(passphrase);    // 下載解密並寫入 store；密語錯誤丟明確錯誤
+// 派工
+await cloud.listDispatches({ role, status });
+await cloud.dispatch({ targetDeviceId, projectId, goal, context, options, parent });  // → dispatch
+await cloud.cancelDispatch(id);
+```
+
+`src/cloud/sync.js`：`createSync({ cloud, engine, store })` 訂閱 engine 事件，把專案、Run、事件、成果同步上去；離線時排隊，重連後補傳，不上傳截圖與 API key。
+
+`src/cloud/remote.js`：`createRemoteRunner({ cloud, engine, store, requestConsent, onForcedApproval })` 接收派工：
+
+- 依 `docs/cloud-api.md` 的安全規則決定是否呼叫 `requestConsent(dispatch) → { accepted, reason? }`。
+- 接受後呼叫 `engine.start({ projectId, goal, context, options: { maxCostUsd, dispatchId } })`，專案不存在就在本機建立。
+- 需要強制逐步批准時呼叫 `onForcedApproval(runId)`。
+- Run 結束時呼叫 report；發起方取消時呼叫 `engine.cancel`。
+
+`src/cloud/mesh.js`：`createMesh({ cloud })` 回傳給引擎用的物件：
+
+```js
+await mesh.listDevices();                  // → [{ id, name, ownerName, mine, online, acceptRemote }]，不含這台
+await mesh.dispatch({ targetDeviceId, projectId, goal, context, options, parent, signal, onUpdate });
+// → 等到結束才回 { status, summary, result, sources, error, costUsd }；signal 取消時會同時取消派工
+await mesh.ask({ dispatchId, text, signal });     // 子 agent 問主 agent，等到回覆 → string
+mesh.onQuestion((q) => {});                       // q：{ dispatchId, messageId, text, parent }，主 agent 端收到提問
+await mesh.answer({ dispatchId, replyTo, text });
+```
+
+### 瀏覽器模組的調整（整合者負責）
+
+`getApprovalMode` 改為接收 `{ runId }`，讓特定任務強制逐步批准。
+
+### 引擎的調整（整合者負責）
+
+`createEngine({ ..., mesh })`：有 `mesh` 時，規劃器可把任務指派給其他裝置；子任務在對方裝置執行並回報。子任務可用 `mesh_ask` 向主 agent 確認，主 agent 自動回答。
