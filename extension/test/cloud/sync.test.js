@@ -86,3 +86,36 @@ test('同步：離線時持久化排隊，重新 online 後以清理過的資料
   const uploadedArtifact = [...sent].reverse().find((item) => item.type === 'artifact').value;
   assert.equal(uploadedArtifact.screenshot, undefined);
 });
+
+test('同步：第一次上傳專案時任務已結束，最後送出的快照仍是最新狀態', async (t) => {
+  const order = [];
+  let releaseProject;
+  const projectGate = new Promise((resolve) => { releaseProject = resolve; });
+  const cloud = {
+    subscribe: () => () => {},
+    getDevice: () => ({ id: 'device-1' }),
+    async putProject() { order.push('project'); await projectGate; },
+    async putRun(run) { order.push(`run:${run.status}`); },
+    async postRunEvents() {},
+  };
+  const run = { id: 'run-1', projectId: 'project-1', goal: '目標', status: 'planning', tasks: [] };
+  let onEngineEvent = null;
+  const engine = {
+    async getRun() { return structuredClone(run); },
+    subscribe(listener) { onEngineEvent = listener; return () => {}; },
+  };
+  const store = { ...fakeStore(), async listProjects() { return [{ id: 'project-1', name: '專案' }]; } };
+  const sync = createSync({ cloud, engine, store, kv: memoryKv() });
+  t.after(() => sync.stop());
+  await sync.ready;
+
+  onEngineEvent({ seq: 1, runId: 'run-1', type: 'usage', payload: {} });
+  await eventually(() => assert.deepEqual(order, ['project']));
+  run.status = 'done';
+  onEngineEvent({ seq: 2, runId: 'run-1', type: 'run_finished', payload: { status: 'done' } });
+  releaseProject();
+
+  await eventually(() => assert.equal(sync.getQueue().length, 0));
+  await eventually(() => assert.equal(order.length, 3));
+  assert.deepEqual(order, ['project', 'run:done', 'run:done'], '專案先建好，任務快照不可回到舊狀態');
+});

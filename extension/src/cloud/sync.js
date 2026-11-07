@@ -111,14 +111,16 @@ export function createSync({ cloud, engine, store, kv = cloud?.storage, queueKey
   };
   const projectFor = async (projectId) => (await store.listProjects()).find((project) => project.id === projectId);
   const syncEvent = async (event) => {
-    const run = await engine.getRun(event.runId);
-    if (!run) return;
+    const initial = await engine.getRun(event.runId);
+    if (!initial) return;
     // 每個專案每次啟動同步一次就夠，不必每個事件都送
-    if (!syncedProjects.has(run.projectId)) {
-      syncedProjects.add(run.projectId);
-      const project = await projectFor(run.projectId);
+    if (!syncedProjects.has(initial.projectId)) {
+      syncedProjects.add(initial.projectId);
+      const project = await projectFor(initial.projectId);
       if (project) await enqueue({ type: 'project', project: safeCloudData(project) });
     }
+    // 上傳專案要等網路，這段時間任務可能已經結束，所以快照要在這之後才取，舊快照才不會蓋掉新狀態
+    const run = (await engine.getRun(event.runId)) ?? initial;
     const deviceId = cloud.getDevice?.()?.id;
     await enqueue({ type: 'run', run: remoteRun(run, deviceId) });
     await enqueue({ type: 'events', runId: run.id, events: [safeCloudData(event)] });
@@ -130,6 +132,14 @@ export function createSync({ cloud, engine, store, kv = cloud?.storage, queueKey
         await enqueue({ type: 'artifact', runId: run.id, artifact: clean });
       }
     }
+  };
+  // 事件一次處理一個：平行處理會讓專案還沒建好就送任務（404 後被丟棄），也會打亂快照順序
+  let eventChain = Promise.resolve();
+  const syncInOrder = (event) => {
+    eventChain = eventChain.then(() => syncEvent(event)).catch((error) => {
+      console.warn('CueMesh：同步事件失敗', error?.message ?? error);
+    });
+    return eventChain;
   };
   const start = () => {
     if (startTask) return startTask;
@@ -143,7 +153,7 @@ export function createSync({ cloud, engine, store, kv = cloud?.storage, queueKey
           pendingEvents.push(event);
           return;
         }
-        void syncEvent(event).catch(() => {});
+        void syncInOrder(event);
       });
       offCloud = cloud.subscribe?.((event) => {
         if (event.type === 'status' && event.status === 'online') void flush();
@@ -151,7 +161,7 @@ export function createSync({ cloud, engine, store, kv = cloud?.storage, queueKey
       const saved = await storage.get(queueKey);
       if (Array.isArray(saved)) queue = saved;
       loadingQueue = false;
-      for (const event of pendingEvents) await syncEvent(event);
+      for (const event of pendingEvents) await syncInOrder(event);
       await flush();
     })();
     return startTask;
