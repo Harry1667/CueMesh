@@ -382,7 +382,6 @@
   "Your cue": "あなたの合図",
   "Your devices": "あなたのデバイス",
   "Your next project": "次のプロジェクト",
-  "Your sign-in session stays in memory. Reloading this page signs you out.": "ログイン情報はメモリ内のみ。ページを再読み込みするとログアウトします。",
   "Your team is out of reach.": "チームに接続できません。",
   "Your tools.": "あなたのツール。",
   "Your work belongs together.": "作業をひとつにつなぐ。",
@@ -415,5 +414,12 @@
   "Connection settings took too long to load.": "接続設定の読み込みがタイムアウトしました。",
   "Sign in to your extension, start a task, and its project will appear here when it syncs.": "拡張機能にログインしてタスクを開始。同期後、ここに表示されます。",
   "No projects yet": "プロジェクトはまだありません",
-  "No result yet": "結果はまだありません"
+  "No result yet": "結果はまだありません",
+  "You stay signed in on this browser until you sign out.": "ログアウトするまで、このブラウザではログインしたままです。",
+  "Task runs": "タスク履歴",
+  "PERSONAL PROJECT": "個人プロジェクト",
+  "PERSONAL PROJECTS": "個人プロジェクト",
+  "No task runs yet": "タスク履歴はまだありません",
+  "Open in workspace": "ワークスペースで開く",
+  "Could not load task runs.": "タスク履歴を読み込めませんでした。"
 }

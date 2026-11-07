@@ -32,7 +32,15 @@ const statusLabels: Record<Dispatch['status'], string> = {
   cancelled: 'Cancelled',
   expired: 'Expired',
 };
-type Tab = 'handoffs' | 'context' | 'people';
+type Tab = 'runs' | 'handoffs' | 'context' | 'people';
+const runStatusLabel: Record<string, string> = {
+  planning: 'Planning',
+  running: 'Running',
+  done: 'Completed',
+  partial: 'Completed',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+};
 type TeamProps = { config: RuntimeConfig; mode: DataMode; setMode: (mode: DataMode) => void };
 export function Team(props: TeamProps) {
   const { user } = useAuth();
@@ -49,7 +57,7 @@ function TeamView({
 }) {
   const { t, locale } = usePreferences();
   const team = useTeamWorkspace(config, mode);
-  const [tab, setTab] = useState<Tab>('handoffs');
+  const [tab, setTab] = useState<Tab>(mode === 'live' ? 'runs' : 'handoffs');
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [pending, setPending] = useState(false);
@@ -296,30 +304,51 @@ function TeamView({
                 <aside className="team-rail">
                   <span className="eyebrow">{t('PROJECTS')}</span>
                   <nav aria-label={t('Shared projects')}>
-                    {team.projects.map((project) => (
-                      <button
-                        key={project.id}
-                        aria-current={team.project?.id === project.id ? 'page' : undefined}
-                        onClick={() => {
-                          team.setSelectedProject(project.id);
-                          setInvite(null);
-                          setReplyTo(null);
-                          setNotice('');
-                        }}
-                      >
-                        <Folder size={16} />
-                        <span>
-                          {project.name}
-                          <small>{t(project.role === 'owner' ? 'Owner' : 'Member')}</small>
-                        </span>
-                      </button>
-                    ))}
+                    {[true, false].map((shared) => {
+                      const group = team.projects.filter(
+                        (item) => (item.memberCount ?? 2) > 1 === shared,
+                      );
+                      if (!group.length) return null;
+                      return (
+                        <div key={String(shared)}>
+                          {shared ? null : (
+                            <span className="eyebrow team-rail-group">
+                              {t('PERSONAL PROJECTS')}
+                            </span>
+                          )}
+                          {group.map((project) => (
+                            <button
+                              key={project.id}
+                              aria-current={team.project?.id === project.id ? 'page' : undefined}
+                              onClick={() => {
+                                team.setSelectedProject(project.id);
+                                setInvite(null);
+                                setReplyTo(null);
+                                setNotice('');
+                              }}
+                            >
+                              <Folder size={16} />
+                              <span>
+                                {project.name}
+                                <small>{t(project.role === 'owner' ? 'Owner' : 'Member')}</small>
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })}
                   </nav>
                 </aside>
                 <section className="team-content">
                   <div className="shared-project-heading">
                     <div>
-                      <span className="eyebrow">{t('SHARED PROJECT')}</span>
+                      <span className="eyebrow">
+                        {t(
+                          (team.project.memberCount ?? 2) > 1
+                            ? 'SHARED PROJECT'
+                            : 'PERSONAL PROJECT',
+                        )}
+                      </span>
                       <h2>{team.project.name}</h2>
                       <p>{team.project.description}</p>
                     </div>
@@ -332,24 +361,50 @@ function TeamView({
                     </button>
                   </div>
                   <div className="team-tabs" aria-label={t('Project views')}>
-                    {(['handoffs', 'context', 'people'] as const).map((value) => (
+                    {(['runs', 'handoffs', 'context', 'people'] as const).map((value) => (
                       <button
                         key={value}
                         aria-pressed={tab === value}
                         onClick={() => setTab(value)}
                       >
                         {t(
-                          value === 'handoffs'
-                            ? 'Agent handoffs'
-                            : value === 'context'
-                              ? 'Shared context'
-                              : 'People & devices',
+                          value === 'runs'
+                            ? 'Task runs'
+                            : value === 'handoffs'
+                              ? 'Agent handoffs'
+                              : value === 'context'
+                                ? 'Shared context'
+                                : 'People & devices',
                         )}
+                        {value === 'runs' ? <span>{team.runs.length}</span> : null}
                         {value === 'handoffs' ? <span>{team.dispatches.length}</span> : null}
                       </button>
                     ))}
                   </div>
-                  {tab === 'people' ? (
+                  {tab === 'runs' ? (
+                    team.runs.length ? (
+                      <ul className="team-run-list">
+                        {team.runs.map((run) => (
+                          <li key={run.id}>
+                            <strong>{run.goal}</strong>
+                            <small>
+                              {t(runStatusLabel[run.status] ?? 'Completed')} ·{' '}
+                              {new Date(run.createdAt).toLocaleString(locale)}
+                            </small>
+                            {run.finalResult ? <p>{run.finalResult.slice(0, 200)}</p> : null}
+                          </li>
+                        ))}
+                        <li className="team-run-more">
+                          <a href="/workspace">{t('Open in workspace')}</a>
+                        </li>
+                      </ul>
+                    ) : (
+                      <div className="empty-state">
+                        <MessageSquare size={30} />
+                        <h3>{t('No task runs yet')}</h3>
+                      </div>
+                    )
+                  ) : tab === 'people' ? (
                     <div className="team-people">
                       <div className="section-heading">
                         <h3>{t('Project members')}</h3>

@@ -27,6 +27,7 @@ export const ProjectSchema = z.object({
   description: z.string(),
   createdAt: timestamp,
   role: RoleSchema.optional(),
+  memberCount: z.number().optional(),
 });
 export const RunSchema = z.object({
   id,

@@ -1100,3 +1100,27 @@
     padding: 16px;
   }
 }
+
+.team-rail-group {
+  display: block;
+  margin: 20px 0 8px;
+}
+.team-run-list {
+  list-style: none;
+  margin: 20px 0 0;
+  padding: 0;
+}
+.team-run-list li {
+  display: grid;
+  gap: 6px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line, rgba(127, 127, 160, 0.25));
+}
+.team-run-list p {
+  margin: 0;
+  opacity: 0.75;
+  overflow-wrap: anywhere;
+}
+.team-run-more {
+  border-bottom: 0 !important;
+}

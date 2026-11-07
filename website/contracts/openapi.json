@@ -3636,6 +3636,9 @@
                   "owner",
                   "member"
                 ]
+              },
+              "memberCount": {
+                "type": "number"
               }
             },
             "required": [
@@ -3677,6 +3680,9 @@
               "owner",
               "member"
             ]
+          },
+          "memberCount": {
+            "type": "number"
           }
         },
         "required": [
@@ -3736,6 +3742,9 @@
                     "owner",
                     "member"
                   ]
+                },
+                "memberCount": {
+                  "type": "number"
                 }
               },
               "required": [

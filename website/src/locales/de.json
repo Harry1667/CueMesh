@@ -382,7 +382,6 @@
   "Your cue": "Dein Impuls",
   "Your devices": "Deine Geräte",
   "Your next project": "Dein nächstes Projekt",
-  "Your sign-in session stays in memory. Reloading this page signs you out.": "Die Sitzung bleibt nur im Speicher. Neuladen meldet dich ab.",
   "Your team is out of reach.": "Dein Team ist nicht erreichbar.",
   "Your tools.": "Deine Werkzeuge.",
   "Your work belongs together.": "Deine Arbeit gehört zusammen.",
@@ -415,5 +414,12 @@
   "Connection settings took too long to load.": "Zeitüberschreitung beim Laden der Einstellungen.",
   "Sign in to your extension, start a task, and its project will appear here when it syncs.": "Melde dich in der Erweiterung an und starte eine Aufgabe. Nach der Synchronisierung erscheint das Projekt hier.",
   "No projects yet": "Noch keine Projekte",
-  "No result yet": "Noch kein Ergebnis"
+  "No result yet": "Noch kein Ergebnis",
+  "You stay signed in on this browser until you sign out.": "Du bleibst in diesem Browser angemeldet, bis du dich abmeldest.",
+  "Task runs": "Aufgaben",
+  "PERSONAL PROJECT": "PERSÖNLICHES PROJEKT",
+  "PERSONAL PROJECTS": "PERSÖNLICHE PROJEKTE",
+  "No task runs yet": "Noch keine Aufgaben",
+  "Open in workspace": "Im Arbeitsbereich öffnen",
+  "Could not load task runs.": "Aufgaben konnten nicht geladen werden."
 }

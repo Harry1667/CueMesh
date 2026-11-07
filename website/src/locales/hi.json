@@ -382,7 +382,6 @@
   "Your cue": "आपका संकेत",
   "Your devices": "आपके डिवाइस",
   "Your next project": "आपका अगला प्रोजेक्ट",
-  "Your sign-in session stays in memory. Reloading this page signs you out.": "सत्र केवल मेमोरी में रहता है। पेज फिर लोड करने पर साइन आउट होगा।",
   "Your team is out of reach.": "टीम तक पहुँच नहीं हो रही।",
   "Your tools.": "आपके उपकरण।",
   "Your work belongs together.": "आपका काम एक साथ होना चाहिए।",
@@ -415,5 +414,12 @@
   "Connection settings took too long to load.": "सेटिंग लोड करने का समय समाप्त हुआ।",
   "Sign in to your extension, start a task, and its project will appear here when it syncs.": "एक्सटेंशन में साइन इन कर कार्य शुरू करें। सिंक होने पर प्रोजेक्ट यहाँ दिखेगा।",
   "No projects yet": "अभी कोई प्रोजेक्ट नहीं",
-  "No result yet": "अभी कोई परिणाम नहीं"
+  "No result yet": "अभी कोई परिणाम नहीं",
+  "You stay signed in on this browser until you sign out.": "साइन आउट करने तक आप इस ब्राउज़र में साइन इन रहेंगे।",
+  "Task runs": "कार्य",
+  "PERSONAL PROJECT": "निजी प्रोजेक्ट",
+  "PERSONAL PROJECTS": "निजी प्रोजेक्ट",
+  "No task runs yet": "अभी कोई कार्य नहीं",
+  "Open in workspace": "वर्कस्पेस में खोलें",
+  "Could not load task runs.": "कार्य लोड नहीं हो सके।"
 }

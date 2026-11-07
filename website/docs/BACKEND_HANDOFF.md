@@ -12,7 +12,7 @@ Frontend branch: `web/cuemesh-experience`. Changes stay inside `website/`. Harry
 
 - Default `/api`; Vite/Nginx forwards the full path to loopback port 8000.
 - JSON, `Accept-Language`, `Authorization: Bearer <token>`, `credentials: omit`, no-store, 12-second client timeout.
-- Token exists only in AuthProvider memory. Reload signs out. A 401 clears auth; logout clears locally even if server revocation fails, and reports that failure.
+- The token is kept in localStorage so reloads stay signed in; logout and any 401 clear it. A 401 clears auth; logout clears locally even if server revocation fails, and reports that failure.
 - No cookie/CSRF flow, OAuth endpoints, Supabase, local accounts or provider-key input.
 - Timestamps are Unix milliseconds. IDs stay opaque strings and are URL encoded. Validate payloads with Zod before use.
 - Runtime config accepts `/api` or an HTTPS URL ending in `/api`; HTTP is limited to loopback. No query, hash or embedded credentials.

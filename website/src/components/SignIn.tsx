@@ -92,7 +92,7 @@ export function SignIn({ onSignedIn }: { onSignedIn?: () => void }) {
       </form>
       <p className="account-footnote">
         <ShieldCheck size={15} />
-        {t('Your sign-in session stays in memory. Reloading this page signs you out.')}
+        {t('You stay signed in on this browser until you sign out.')}
       </p>
     </section>
   );

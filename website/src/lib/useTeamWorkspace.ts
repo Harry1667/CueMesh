@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from './auth';
 import { ApiError } from './api';
-import type { Device, Dispatch, DispatchDetail, Member, Project, RuntimeConfig } from './contracts';
+import type {
+  Device,
+  Dispatch,
+  DispatchDetail,
+  Member,
+  Project,
+  Run,
+  RuntimeConfig,
+} from './contracts';
 import { demoDevices, demoDispatchDetail, demoMembers, demoSharedProject } from '../data/teamDemo';
 
 export function useTeamWorkspace(config: RuntimeConfig, mode: 'demo' | 'live') {
@@ -16,6 +24,7 @@ export function useTeamWorkspace(config: RuntimeConfig, mode: 'demo' | 'live') {
   const [selectedProject, setSelectedProject] = useState('');
   const [selectedDispatch, setSelectedDispatch] = useState('');
   const [members, setMembers] = useState<Member[]>([]);
+  const [runs, setRuns] = useState<Run[]>([]);
   const [detail, setDetail] = useState<DispatchDetail | null>(null);
   const project = projects.find((item) => item.id === selectedProject) ?? projects[0];
   const projectDispatches = dispatches.filter((item) => item.projectId === project?.id);
@@ -52,7 +61,9 @@ export function useTeamWorkspace(config: RuntimeConfig, mode: 'demo' | 'live') {
           api.dispatches('outgoing', controller.signal),
         ]);
         if (controller.signal.aborted) return;
-        setProjects(nextProjects.projects);
+        // 共享專案排前面，預設就開共享專案
+        const isShared = (item: Project) => ((item.memberCount ?? 2) > 1 ? 0 : 1);
+        setProjects([...nextProjects.projects].sort((a, b) => isShared(a) - isShared(b)));
         setDevices(nextDevices.devices);
         setDispatches(
           [
@@ -87,7 +98,22 @@ export function useTeamWorkspace(config: RuntimeConfig, mode: 'demo' | 'live') {
   }, [api, user, mode, config.pollIntervalMs, refreshKey]);
   useEffect(() => {
     setMembers([]);
+    setRuns([]);
   }, [project?.id]);
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!project || mode === 'demo') return () => controller.abort();
+    void api
+      .runs(project.id, controller.signal)
+      .then((response) => {
+        if (!controller.signal.aborted) setRuns(response.runs);
+      })
+      .catch((cause) => {
+        if (!controller.signal.aborted)
+          setError(cause instanceof Error ? cause.message : 'Could not load task runs.');
+      });
+    return () => controller.abort();
+  }, [api, mode, project?.id, tick]);
   useEffect(() => {
     const controller = new AbortController();
     if (!project) return () => controller.abort();
@@ -157,6 +183,7 @@ export function useTeamWorkspace(config: RuntimeConfig, mode: 'demo' | 'live') {
     project,
     devices,
     members,
+    runs,
     dispatches: projectDispatches,
     dispatch,
     detail,

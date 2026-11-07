@@ -382,7 +382,6 @@
   "Your cue": "Your cue",
   "Your devices": "Your devices",
   "Your next project": "Your next project",
-  "Your sign-in session stays in memory. Reloading this page signs you out.": "Your sign-in session stays in memory. Reloading this page signs you out.",
   "Your team is out of reach.": "Your team is out of reach.",
   "Your tools.": "Your tools.",
   "Your work belongs together.": "Your work belongs together.",
@@ -415,5 +414,12 @@
   "Connection settings took too long to load.": "Connection settings took too long to load.",
   "Sign in to your extension, start a task, and its project will appear here when it syncs.": "Sign in to your extension, start a task, and its project will appear here when it syncs.",
   "No projects yet": "No projects yet",
-  "No result yet": "No result yet"
+  "No result yet": "No result yet",
+  "You stay signed in on this browser until you sign out.": "You stay signed in on this browser until you sign out.",
+  "Task runs": "Task runs",
+  "PERSONAL PROJECT": "PERSONAL PROJECT",
+  "PERSONAL PROJECTS": "PERSONAL PROJECTS",
+  "No task runs yet": "No task runs yet",
+  "Open in workspace": "Open in workspace",
+  "Could not load task runs.": "Could not load task runs."
 }

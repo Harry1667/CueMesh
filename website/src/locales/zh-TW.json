@@ -382,7 +382,6 @@
   "Your cue": "你的提示",
   "Your devices": "你的裝置",
   "Your next project": "你的下一個專案",
-  "Your sign-in session stays in memory. Reloading this page signs you out.": "登入憑證僅保留在記憶體中。重新載入此頁會登出。",
   "Your team is out of reach.": "目前無法連接團隊。",
   "Your tools.": "你的工具。",
   "Your work belongs together.": "讓工作連在一起。",
@@ -415,5 +414,12 @@
   "Connection settings took too long to load.": "載入連線設定逾時。",
   "Sign in to your extension, start a task, and its project will appear here when it syncs.": "在擴充功能登入並開始任務。專案同步後會出現在這裡。",
   "No projects yet": "尚無專案",
-  "No result yet": "尚無結果"
+  "No result yet": "尚無結果",
+  "You stay signed in on this browser until you sign out.": "在這個瀏覽器會保持登入，直到你登出。",
+  "Task runs": "任務紀錄",
+  "PERSONAL PROJECT": "個人專案",
+  "PERSONAL PROJECTS": "個人專案",
+  "No task runs yet": "尚無任務紀錄",
+  "Open in workspace": "到工作空間查看",
+  "Could not load task runs.": "無法載入任務紀錄。"
 }

@@ -382,7 +382,6 @@
   "Your cue": "إشارتك",
   "Your devices": "أجهزتك",
   "Your next project": "مشروعك القادم",
-  "Your sign-in session stays in memory. Reloading this page signs you out.": "تبقى الجلسة في الذاكرة فقط. إعادة التحميل تسجل خروجك.",
   "Your team is out of reach.": "تعذر الوصول إلى فريقك.",
   "Your tools.": "أدواتك.",
   "Your work belongs together.": "مكان عملك معًا.",
@@ -415,5 +414,12 @@
   "Connection settings took too long to load.": "انتهت مهلة تحميل الإعدادات.",
   "Sign in to your extension, start a task, and its project will appear here when it syncs.": "سجل الدخول في الإضافة وابدأ مهمة. يظهر المشروع بعد المزامنة.",
   "No projects yet": "لا توجد مشاريع بعد",
-  "No result yet": "لا توجد نتيجة بعد"
+  "No result yet": "لا توجد نتيجة بعد",
+  "You stay signed in on this browser until you sign out.": "ستبقى مسجلاً الدخول في هذا المتصفح حتى تسجّل الخروج.",
+  "Task runs": "المهام",
+  "PERSONAL PROJECT": "مشروع شخصي",
+  "PERSONAL PROJECTS": "مشاريع شخصية",
+  "No task runs yet": "لا توجد مهام بعد",
+  "Open in workspace": "فتح في مساحة العمل",
+  "Could not load task runs.": "تعذّر تحميل المهام."
 }
