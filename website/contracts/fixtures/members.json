@@ -1,0 +1,16 @@
+{
+  "members": [
+    {
+      "userId": "demo-user",
+      "displayName": "Ethan",
+      "email": "ethan@example.com",
+      "role": "owner"
+    },
+    {
+      "userId": "demo-harry",
+      "displayName": "Harry",
+      "email": "harry@example.com",
+      "role": "member"
+    }
+  ]
+}

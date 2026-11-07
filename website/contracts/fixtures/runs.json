@@ -1,0 +1,34 @@
+{
+  "runs": [
+    {
+      "id": "demo-run-1",
+      "projectId": "demo-materials",
+      "goal": "Build a materials explorer.",
+      "status": "done",
+      "mode": "auto",
+      "planSummary": "Research → Build → Review.",
+      "finalResult": "Preview + direction notes.\n\nAuthored sample files. No agents ran in this demo.",
+      "error": null,
+      "costUsd": 0.0184,
+      "inputTokens": 2400,
+      "outputTokens": 1650,
+      "createdAt": 1794020400000,
+      "finishedAt": 1794020496000
+    },
+    {
+      "id": "demo-run-2",
+      "projectId": "demo-materials",
+      "goal": "Review the reference.",
+      "status": "partial",
+      "mode": "council",
+      "planSummary": "Compare two viewpoints and collect the useful disagreements.",
+      "finalResult": "The layout review is complete. The second viewpoint could not be retrieved, so this run is only partially complete.",
+      "error": "Example: the second provider reached its request limit.",
+      "costUsd": 0.0042,
+      "inputTokens": 700,
+      "outputTokens": 340,
+      "createdAt": 1794016800000,
+      "finishedAt": 1794016880000
+    }
+  ]
+}

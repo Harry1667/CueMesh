@@ -1,0 +1,57 @@
+{
+  "dispatch": {
+    "id": "demo-dispatch",
+    "projectId": "demo-cuemesh-team",
+    "targetDeviceId": "demo-back-device",
+    "targetUserId": "demo-harry",
+    "senderUserId": "demo-user",
+    "senderName": "Ethan",
+    "senderDeviceId": "demo-front-device",
+    "crossAccount": true,
+    "goal": "Confirm the account API fields so the frontend and backend can connect.",
+    "context": [
+      {
+        "type": "selection",
+        "title": "Shared integration brief",
+        "text": "The frontend owns website/. Harry owns server/ and extension/. Use the server account and Bearer authentication. Website and extension approve work within their own permissions.",
+        "url": "https://github.com/Harry1667/CueMesh/blob/main/docs/cloud-api.md"
+      }
+    ],
+    "options": {
+      "maxCostUsd": 0.5
+    },
+    "parent": null,
+    "status": "accepted",
+    "runId": null,
+    "summary": "Sample handoff: backend interface review is in progress.",
+    "result": null,
+    "sources": [],
+    "error": null,
+    "costUsd": 0,
+    "createdAt": 1794022200000,
+    "updatedAt": 1794023700000,
+    "expiresAt": 1794024600000
+  },
+  "messages": [
+    {
+      "id": "demo-question",
+      "dispatchId": "demo-dispatch",
+      "fromUserId": "demo-user",
+      "fromDeviceId": "demo-front-device",
+      "kind": "question",
+      "text": "Which account fields should the frontend display after sign-in?",
+      "replyTo": null,
+      "createdAt": 1794022500000
+    },
+    {
+      "id": "demo-answer",
+      "dispatchId": "demo-dispatch",
+      "fromUserId": "demo-harry",
+      "fromDeviceId": "demo-back-device",
+      "kind": "answer",
+      "text": "The shared contract uses user.id, user.email, user.displayName, and user.createdAt. This is an illustrative conversation, not a real server reply.",
+      "replyTo": "demo-question",
+      "createdAt": 1794022800000
+    }
+  ]
+}

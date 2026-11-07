@@ -1,0 +1,11 @@
+{
+  "projects": [
+    {
+      "id": "demo-cuemesh-team",
+      "name": "CueMesh launch",
+      "description": "Frontend and backend, working from the same brief.",
+      "createdAt": 1794024000000,
+      "role": "owner"
+    }
+  ]
+}

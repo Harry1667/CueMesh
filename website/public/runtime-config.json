@@ -1,0 +1,6 @@
+{
+  "dataMode": "demo",
+  "apiBaseUrl": "/api",
+  "pollIntervalMs": 3000,
+  "extensionInstallUrl": "https://github.com/Harry1667/CueMesh#readme"
+}

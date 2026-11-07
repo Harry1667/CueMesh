@@ -1,0 +1,81 @@
+# Install as /etc/nginx/conf.d/cuemesh.conf after replacing the domain and TLS paths.
+# This is an example, not a cloud deployment or a validated server configuration.
+server {
+    listen 80;
+    server_name cuemesh.example.com;
+    return 301 https://cuemesh.example.com$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name cuemesh.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/cuemesh.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/cuemesh.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    root /srv/cuemesh/current;
+    index index.html;
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    server_tokens off;
+
+    # Operational placeholder. Agree on artifact/event limits with the backend owner.
+    client_max_body_size 10m;
+    expires -1;
+
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'" always;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    location ^~ /api/ {
+        # No trailing URI: preserve the server v1 /api/... path.
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        # server/ SSE keepalive is 25 seconds; also support extension streams.
+        proxy_read_timeout 75s;
+        proxy_send_timeout 15s;
+        proxy_cache off;
+        proxy_buffering off;
+        expires off;
+        error_page 502 503 504 =503 @api_unavailable;
+    }
+
+    location @api_unavailable {
+        default_type application/json;
+        return 503 '{"error":{"code":"service_unavailable","message":"The workspace service is temporarily unavailable."}}';
+    }
+
+    location = /runtime-config.json {
+        try_files $uri =404;
+        expires -1;
+    }
+
+    location = /index.html {
+        expires -1;
+    }
+
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+    }
+
+    location ~ /\. {
+        deny all;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
