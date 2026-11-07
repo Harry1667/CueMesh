@@ -60,8 +60,8 @@
   "title": "查詢價格",
   "agent": "research",
   "status": "done",
-  "provider": "gemini",
-  "model": "gemini-3.8-flash",
+  "provider": "openai",
+  "model": "gpt-6.1-sol",
   "result": "……",
   "sources": [{ "title": "官方價格頁", "url": "https://example.com/pricing" }],
   "error": null,
@@ -73,7 +73,7 @@
 - `agent`：`research`、`coding`、`3d`、`vision`、`planning`、`review`、`browser`
 - `status`：`pending`、`running`、`done`、`failed`
 - `parentTaskId` 有值時，代表這個任務是其他 agent 用 `@` 委派出來的
-- `provider`：`anthropic`、`openai`、`gemini`
+- `provider`：`anthropic`、`openai`
 
 ### Artifact（成果檔案）
 

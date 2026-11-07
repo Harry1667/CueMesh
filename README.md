@@ -13,7 +13,7 @@ CueMesh 是一個能實際操作瀏覽器的 Chrome 擴充功能。你指著畫�
 用 AI 工作時，時間常花在這三件事上：
 
 - **重複解釋：** 反覆複製貼上、截圖，說明自己正在看什麼。
-- **人工當中介：** 自己在 ChatGPT、Claude、Gemini 之間轉貼內容，再整合結果。
+- **人工當中介：** 自己在 ChatGPT、Claude 之間轉貼內容，再整合結果。
 - **最後一哩路：** AI 給了答案，操作網頁還是要自己動手。
 
 CueMesh 的做法是：**使用者表達意圖，AI 取得情境、分工並動手執行。**
@@ -41,14 +41,14 @@ CueMesh 的做法是：**使用者表達意圖，AI 取得情境、分工並動�
 
 ## 模型分工預設
 
-依 [模型比較文件](docs/model-comparison.md)（查核日期 2026-11-07）：
+目前支援 Anthropic Claude 與 OpenAI，依 [模型比較文件](docs/model-comparison.md)（查核日期 2026-11-07）在這兩家中選擇：
 
 | 工作類型 | 首選模型 | 信心 |
 |---|---|---|
-| research：查資料 | `gemini-3.8-flash` | 中 |
+| research：查資料 | `gpt-6.1-sol` | 中 |
 | coding：寫程式 | `claude-opus-5-5` | 低～中 |
-| 3d：Three.js 場景 | `gemini-4-argon` | 低 |
-| vision：看圖與截圖 | `gemini-3.8-flash` | 中 |
+| 3d：Three.js 場景 | `claude-opus-5-5` | 低 |
+| vision：看圖與截圖 | `gpt-6.1-terra` | 中 |
 | planning：拆解任務 | `claude-opus-5-5` | 低 |
 | review：審查成果 | `gpt-6.1-sol` | 低 |
 | browser：操作瀏覽器 | `claude-opus-5-5` | 中～低 |
