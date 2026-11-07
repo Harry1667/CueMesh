@@ -89,6 +89,17 @@ export async function createStore({ kv = chromeKv(), onError = (err) => console.
       schedule();
       return structuredClone(project);
     },
+    // 共享專案與被派工時，本機要用雲端相同的 id，同步與回報才對得起來
+    async ensureProject({ id, name, description = '' }) {
+      if (typeof id !== 'string' || !id) throw new Error('專案 id 不可空白');
+      const existing = state.projects.find((p) => p.id === id);
+      if (existing) return structuredClone(existing);
+      if (!name?.trim()) throw new Error('專案名稱不可空白');
+      const project = { id, name: name.trim(), description, memory: '', createdAt: Date.now() };
+      state.projects.push(project);
+      schedule();
+      return structuredClone(project);
+    },
     async deleteProject(id) {
       state.projects = state.projects.filter((p) => p.id !== id);
       state.runs = state.runs.filter((r) => r.projectId !== id);
@@ -101,6 +112,10 @@ export async function createStore({ kv = chromeKv(), onError = (err) => console.
           .sort((a, b) => b.createdAt - a.createdAt)
           .map(({ events, context, ...rest }) => rest),
       );
+    },
+    // 只給金鑰保險箱加密用；UI 一律用 getKeyStatus
+    async exportKeys() {
+      return Object.fromEntries(PROVIDERS.map(({ id }) => [id, keys[id] ?? null]));
     },
     async getKeyStatus() {
       return Object.fromEntries(PROVIDERS.map(({ id }) => [id, { set: Boolean(keys[id]), last4: keys[id]?.slice(-4) ?? null }]));

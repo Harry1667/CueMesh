@@ -2,7 +2,7 @@
 // 事件格式與真實引擎相同（docs/integration-contract.md），也用真實的模型目錄。
 import { AGENT_TYPES, MODELS, ROUTES } from '../core/catalog.js';
 import { applyTheme, mountApp } from './app.js';
-import { createApprovalQueue } from './logic.js';
+import { createApprovalQueue, createConsentQueue } from './logic.js';
 
 const params = new URLSearchParams(location.search);
 const stateName = params.get('state') ?? 'ready';
@@ -38,7 +38,7 @@ function createFakeStore({ keys = {}, projects, runs = [], workflows = [], stats
       data.runs = data.runs.filter((r) => r.projectId !== projectId);
     },
     listRuns: async (projectId) => clone(data.runs.filter((r) => r.projectId === projectId).sort((a, b) => b.createdAt - a.createdAt)),
-    getKeyStatus: async () => Object.fromEntries(['anthropic', 'openai', 'gemini'].map((p) => [p, { set: Boolean(data.keys[p]), last4: data.keys[p]?.slice(-4) ?? null }])),
+    getKeyStatus: async () => Object.fromEntries(['anthropic', 'openai'].map((p) => [p, { set: Boolean(data.keys[p]), last4: data.keys[p]?.slice(-4) ?? null }])),
     setKey: async (provider, value) => {
       if (value.includes('fail')) throw new Error('模擬的儲存錯誤');
       data.keys[provider] = value;
@@ -253,11 +253,11 @@ function makeScript({ outcome = 'done', freezeAt = null, pace = 0 }) {
     await freeze('planned');
 
     const startedAt = Date.now();
-    emit(run, 'task_update', { taskId: t1, fields: { status: 'running', provider: 'gemini', model: 'gemini-3.8-flash', startedAt } });
+    emit(run, 'task_update', { taskId: t1, fields: { status: 'running', provider: 'openai', model: 'gpt-6.1-sol', startedAt } });
     await wait(900);
-    emit(run, 'task_update', { taskId: t1, fields: { provider: 'openai', model: 'gpt-6.1-sol' } });
-    emit(run, 'fallback', { taskId: t1, provider: 'openai', model: 'gpt-6.1-sol', reason: 'gemini-3.8-flash 回傳 429：請求太頻繁，已改用下一個模型' });
-    usage('openai', 'gpt-6.1-sol', 5200, 900, 0.0194);
+    emit(run, 'task_update', { taskId: t1, fields: { provider: 'anthropic', model: 'claude-sonnet-5-5' } });
+    emit(run, 'fallback', { taskId: t1, provider: 'anthropic', model: 'claude-sonnet-5-5', reason: 'gpt-6.1-sol 回傳 429：請求太頻繁，已改用下一個模型' });
+    usage('anthropic', 'claude-sonnet-5-5', 5200, 900, 0.0194);
     await wait(900);
     emit(run, 'task_update', {
       taskId: t1,
@@ -278,7 +278,7 @@ function makeScript({ outcome = 'done', freezeAt = null, pace = 0 }) {
     emit(run, 'agent_message', { taskId: t3, text: '比較頁需要最新的席位上限，請 @research 補查。' });
     const child = task(`${run.id}-c1`, '@research：查三家席位上限', 'research', 1001, t3);
     emit(run, 'mention', { fromTaskId: t3, fromAgent: 'coding', toTaskId: child, agent: 'research', request: '查三家方案的席位上限，附官方來源' });
-    emit(run, 'task_update', { taskId: child, fields: { status: 'running', provider: 'gemini', model: 'gemini-4-argon', startedAt: Date.now() } });
+    emit(run, 'task_update', { taskId: child, fields: { status: 'running', provider: 'openai', model: 'gpt-6.1-sol', startedAt: Date.now() } });
 
     emit(run, 'tool_call', { taskId: t2, tool: 'browser_snapshot', args: {} });
     await wait(400);
@@ -317,7 +317,7 @@ function makeScript({ outcome = 'done', freezeAt = null, pace = 0 }) {
 
     emit(run, 'task_update', { taskId: child, fields: { status: 'done', result: '席位上限：10、5、3。', finishedAt: Date.now() + 9000 } });
     emit(run, 'task_update', { taskId: t2, fields: { status: 'done', result: '已核對價格頁：年繳每席 US$23。沒有送出任何訂單。', finishedAt: Date.now() + 41000 } });
-    usage('gemini', 'gemini-4-argon', 3000, 700, 0.013);
+    usage('openai', 'gpt-6.1-sol', 3000, 700, 0.013);
     await wait(500);
 
     const artifacts = [
@@ -362,14 +362,13 @@ function makeScript({ outcome = 'done', freezeAt = null, pace = 0 }) {
 
 // ---------- 真實引擎 + 假供應商 ----------
 // 用真正的 engine.js 與 store.js，只把 AI 換成劇本，確認 UI 和實際事件流對得上。
-async function createRealEngineDeps() {
+async function createRealEngineDeps({ serverUrl = null } = {}) {
   const [{ createEngine }, { createStore, memoryKv }, { ProviderError }] = await Promise.all([
     import('../core/engine.js'), import('../core/store.js'), import('../providers/types.js'),
   ]);
   const store = await createStore({ kv: memoryKv() });
   await store.setKey('anthropic', 'test-key-anth');
   await store.setKey('openai', 'test-key-open');
-  await store.setKey('gemini', 'test-key-gemi');
   const project = await store.createProject({ name: '真實引擎測試', description: '' });
   await store.saveWorkflow({ name: '兩步流程', steps: [
     { title: '查資料', agent: 'research', instructions: '查資料' },
@@ -377,12 +376,31 @@ async function createRealEngineDeps() {
   ] });
 
   const usage = { input: 1200, output: 300 };
-  let geminiFailed = false;
+  let researchFailed = false;
   const reply = (text, extra = {}) => ({ text, toolCalls: [], usage, sources: [], raw: { text }, ...extra });
   const call = (name, args) => ({ id: id('call'), name, args });
-  const turn = (providerName) => async ({ system, messages, signal }) => {
+  const turn = (providerName) => async ({ system, messages, tools, signal }) => {
     await sleep(60);
     if (signal?.aborted) throw new DOMException('已取消', 'AbortError');
+    if (system.includes('你是主 agent')) return reply('用營運部的帳號，不要動財務部的資料。');
+    const prompt = messages[0]?.content?.[0]?.text ?? '';
+    // 被派工的那台：規劃器沒有裝置清單，只排一個會向主 agent 提問的任務
+    if (system.includes('任務規劃器') && prompt.includes('跨裝置測試') && !system.includes('可派工的其他裝置')) {
+      return reply(JSON.stringify({
+        summary: '查資料並向主 agent 確認。',
+        tasks: [{ id: 't1', title: '查訂單', agent: 'review', instructions: '查訂單', dependsOn: [], useContext: false }],
+      }));
+    }
+    if (system.includes('任務規劃器') && prompt.includes('跨裝置測試')) {
+      const device = /裝置：(.+)/.exec(prompt)?.[1]?.trim();
+      return reply(JSON.stringify({
+        summary: '查資料交給另一台裝置，這台負責整合。',
+        tasks: [
+          { id: 't1', title: '到後台查訂單', agent: 'browser', instructions: '到後台匯出上個月的訂單', dependsOn: [], useContext: false, device },
+          { id: 't2', title: '審查回報', agent: 'review', instructions: '審查', dependsOn: ['t1'], useContext: false },
+        ],
+      }));
+    }
     if (system.includes('任務規劃器')) {
       return reply(JSON.stringify({
         summary: '先查資料，再寫成網頁，並用瀏覽器核對，最後審查。',
@@ -396,9 +414,9 @@ async function createRealEngineDeps() {
     }
     const toolRounds = messages.filter((m) => m.role === 'tool').length;
     if (system.includes('研究 agent')) {
-      if (providerName === 'gemini' && !geminiFailed) {
-        geminiFailed = true;
-        throw new ProviderError('rate', 'gemini：請求太頻繁', { provider: 'gemini', status: 429 });
+      if (providerName === 'openai' && !researchFailed) {
+        researchFailed = true;
+        throw new ProviderError('rate', 'openai：請求太頻繁', { provider: 'openai', status: 429 });
       }
       return reply('查到價格：**$29**。', { sources: [{ title: '官方價格頁', url: 'https://example.com/pricing' }, { title: '壞連結', url: 'javascript:alert(1)' }] });
     }
@@ -412,10 +430,13 @@ async function createRealEngineDeps() {
       if (toolRounds === 1) return reply('', { toolCalls: [call('browser_click', { ref: 'e12' })] });
       return reply('已核對，沒有送出任何東西。');
     }
+    if (system.includes('審查 agent') && tools?.some((t) => t.name === 'mesh_ask') && toolRounds === 0) {
+      return reply('', { toolCalls: [call('mesh_ask', { question: '後台有兩個帳號，要用哪個？' })] });
+    }
     if (system.includes('審查 agent')) return reply('沒有發現問題。');
     return reply(`## 整合結果\n已完成，來源見下方。\n\n<script>window.__xss = 1<\/script>\n\n[壞連結](javascript:window.__xss=1)`);
   };
-  const providers = Object.fromEntries(['anthropic', 'openai', 'gemini'].map((name) => [name, { name, turn: turn(name) }]));
+  const providers = Object.fromEntries(['anthropic', 'openai'].map((name) => [name, { name, turn: turn(name) }]));
 
   const approvals = createApprovalQueue();
   const browser = {
@@ -430,8 +451,231 @@ async function createRealEngineDeps() {
       return answer.approved ? { ok: true, text: '已點擊' } : { ok: false, denied: true, error: answer.note || '使用者拒絕' };
     },
   };
-  const engine = createEngine({ store, providers, browser });
-  return { store, engine, browser, approvals, projectId: project.id };
+  if (!serverUrl) {
+    const engine = createEngine({ store, providers, browser });
+    return { store, engine, browser, approvals, projectId: project.id };
+  }
+
+  // 真實伺服器：cloud、mesh、sync、remote 都是正式模組，組裝方式和 sidepanel.js 相同
+  const [{ createCloud }, { createMesh }, { createSync }, { createRemoteRunner }, { createApprovalPolicy }] = await Promise.all([
+    import('../cloud/index.js'), import('../cloud/mesh.js'), import('../cloud/sync.js'), import('../cloud/remote.js'), import('./logic.js'),
+  ]);
+  const cloud = await createCloud({ kv: memoryKv(), store, baseUrl: serverUrl });
+  const mesh = createMesh({ cloud });
+  const engine = createEngine({ store, providers, browser, mesh });
+  const consents = createConsentQueue();
+  const policy = createApprovalPolicy('risky');
+  engine.subscribe((event) => {
+    if (event.type === 'run_finished') policy.release(event.runId);
+  });
+  await createSync({ cloud, engine, store })?.start?.();
+  createRemoteRunner({ cloud, engine, store, requestConsent: consents.request, onForcedApproval: policy.force });
+  // 第二個帳號：同一頁再建一個獨立的 cloud，扮演另一個人
+  const createPeer = async () => {
+    const peerStore = await createStore({ kv: memoryKv() });
+    return createCloud({ kv: memoryKv(), store: peerStore, baseUrl: serverUrl });
+  };
+  // 完整的第二台：有自己的引擎與 runner，接受派工後真的執行並回報（一律同意，只用於測試）
+  const createFullPeer = async ({ seedProject = null } = {}) => {
+    // seedProject：模擬對方本機已有相同 id 的專案
+    const seed = seedProject ? { 'cuemesh.state.v1': { projects: [{ ...seedProject, description: '', memory: '', createdAt: Date.now() }] } } : {};
+    const peerStore = await createStore({ kv: memoryKv(seed) });
+    await peerStore.setKey('anthropic', 'test-key-peer');
+    await peerStore.setKey('openai', 'test-key-peer2');
+    const peerCloud = await createCloud({ kv: memoryKv(), store: peerStore, baseUrl: serverUrl });
+    const peerMesh = createMesh({ cloud: peerCloud });
+    const peerEngine = createEngine({ store: peerStore, providers, browser, mesh: peerMesh });
+    await createSync({ cloud: peerCloud, engine: peerEngine, store: peerStore })?.start?.();
+    createRemoteRunner({ cloud: peerCloud, engine: peerEngine, store: peerStore, requestConsent: async () => ({ accepted: true }), onForcedApproval: () => {} });
+    return { cloud: peerCloud, engine: peerEngine, store: peerStore };
+  };
+  return { store, engine, browser, approvals, consents, cloud, policy, createPeer, createFullPeer, projectId: project.id };
+}
+
+// ---------- 假 cloud（依 docs/cloud-api.md 與 ARCHITECTURE.md 介面六）----------
+const ME = { id: 'u1', email: 'harry@example.com', displayName: 'Harry', createdAt: Date.now() - 864e5 };
+const DEVICES = () => [
+  { id: 'dev-this', userId: 'u1', ownerName: 'Harry', name: '工作室 Mac mini', platform: 'mac', acceptRemote: 'ask', online: true, lastSeenAt: Date.now(), mine: true },
+  { id: 'dev-air', userId: 'u1', ownerName: 'Harry', name: 'MacBook Air', platform: 'mac', acceptRemote: 'auto', online: true, lastSeenAt: Date.now(), mine: true },
+  { id: 'dev-old', userId: 'u1', ownerName: 'Harry', name: '舊筆電', platform: 'windows', acceptRemote: 'ask', online: false, lastSeenAt: Date.now() - 36e5, mine: true },
+  { id: 'dev-amy', userId: 'u2', ownerName: '小芸', name: '小芸的 MacBook Pro', platform: 'mac', acceptRemote: 'ask', online: true, lastSeenAt: Date.now(), mine: false },
+  { id: 'dev-off', userId: 'u3', ownerName: '阿哲', name: '阿哲的桌機', platform: 'windows', acceptRemote: 'off', online: true, lastSeenAt: Date.now(), mine: false },
+];
+const DISPATCHES = () => [
+  { id: 'd1', direction: 'outgoing', projectId: 'p1', targetDeviceId: 'dev-amy', senderName: 'Harry', crossAccount: true, goal: '到競品 A 的後台匯出上個月的方案價格', status: 'accepted', sources: [], costUsd: 0.0431, createdAt: Date.now() - 12e4 },
+  { id: 'd2', direction: 'outgoing', projectId: 'p1', targetDeviceId: 'dev-air', senderName: 'Harry', crossAccount: false, goal: '整理 Example 的方案比較表', status: 'done', summary: '已完成比較表', result: '## 比較結果\n**專業版最划算**，年繳每席 US$23。\n\n<script>window.__xss = 1<\/script>\n\n[壞連結](javascript:window.__xss=1)', sources: [{ title: '官方價格頁', url: 'https://example.com/pricing' }, { title: '壞來源', url: 'javascript:window.__xss=1' }], costUsd: 0.1204, createdAt: Date.now() - 36e5 },
+  { id: 'd3', direction: 'incoming', projectId: 'p1', targetDeviceId: 'dev-this', senderName: '小芸', crossAccount: true, goal: '幫我看官網首頁在你那邊的顯示', status: 'rejected', error: '現在不方便', sources: [], costUsd: 0, createdAt: Date.now() - 72e5 },
+  { id: 'd4', direction: 'outgoing', projectId: 'p1', targetDeviceId: 'dev-old', senderName: 'Harry', crossAccount: false, goal: '備份下載資料夾清單', status: 'expired', sources: [], costUsd: 0, createdAt: Date.now() - 864e5 },
+];
+const REMOTE_PROJECTS = [
+  { id: 'p1', name: '競品研究', role: 'owner', memberCount: 2 },
+  { id: 'p2', name: '官網改版', role: 'owner', memberCount: 1 },
+  { id: 'p-amy', name: '小芸的新品上市', role: 'member', memberCount: 3 },
+];
+const MEMBERS = { p1: [
+  { userId: 'u1', displayName: 'Harry', email: 'harry@example.com', role: 'owner' },
+  { userId: 'u2', displayName: '小芸', email: 'amy@example.com', role: 'member' },
+] };
+
+function createFakeCloud({ signedIn = true, status, store, offlineLoad = false }) {
+  const listeners = new Set();
+  const state = {
+    user: signedIn ? { ...ME } : null,
+    status: status ?? (signedIn ? 'online' : 'signed_out'),
+    baseUrl: 'https://cuemesh.example.com',
+    device: DEVICES()[0],
+    devices: DEVICES(),
+    dispatches: DISPATCHES(),
+    projects: clone(REMOTE_PROJECTS),
+    members: clone(MEMBERS),
+    vault: { exists: true, updatedAt: Date.now() - 864e5 },
+    lastPassphrase: null,
+    dispatchCalls: [],
+  };
+  const emit = (event) => { for (const fn of listeners) fn(event); };
+  const setStatus = (next) => {
+    state.status = next;
+    emit({ type: 'status', status: next });
+  };
+  const requireOnline = () => {
+    if (offlineLoad) throw new Error('連不上伺服器');
+  };
+  return {
+    state,
+    emit,
+    setStatus,
+    async register({ email, displayName }) {
+      await sleep(80);
+      if (email === 'taken@example.com') throw new Error('這個電子郵件無法註冊');
+      state.user = { ...ME, email, displayName };
+      setStatus('online');
+    },
+    async login({ email, password }) {
+      await sleep(80);
+      if (password === 'wrong-password') throw new Error('電子郵件或密碼錯誤');
+      state.user = { ...ME, email };
+      setStatus('online');
+    },
+    async logout() {
+      state.user = null;
+      setStatus('signed_out');
+    },
+    getUser: () => (state.user ? { ...state.user } : null),
+    getDevice: () => ({ ...state.device }),
+    getStatus: () => state.status,
+    getBaseUrl: () => state.baseUrl,
+    async setBaseUrl(url) { state.baseUrl = url; },
+    async renameDevice(name) {
+      state.device.name = name;
+      state.devices.find((d) => d.id === state.device.id).name = name;
+    },
+    async setAcceptRemote(value) {
+      state.device.acceptRemote = value;
+      state.devices.find((d) => d.id === state.device.id).acceptRemote = value;
+    },
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => listeners.delete(fn);
+    },
+    async listDevices() { requireOnline(); return clone(state.devices); },
+    async listProjects() { requireOnline(); return clone(state.projects); },
+    async createInvite(projectId) {
+      requireOnline();
+      if (projectId === 'p-unsynced') { const e = new Error('找不到專案'); e.status = 404; throw e; }
+      return { code: 'CUE-7F3K-92QX', expiresAt: Date.now() + 7 * 864e5 };
+    },
+    async acceptInvite(code) {
+      if (code === 'BAD') throw new Error('邀請碼無效或已過期');
+      const project = { id: 'p-new', name: '新加入的專案', role: 'member', memberCount: 2 };
+      state.projects.push(project);
+      state.members['p-new'] = [{ userId: 'u9', displayName: '別人', email: 'x@example.com', role: 'owner' }, { userId: 'u1', displayName: 'Harry', email: 'harry@example.com', role: 'member' }];
+      return { project };
+    },
+    async listMembers(projectId) {
+      requireOnline();
+      if (!state.members[projectId]) { const e = new Error('找不到專案'); e.status = 404; throw e; }
+      return clone(state.members[projectId]);
+    },
+    async removeMember(projectId, userId) {
+      state.members[projectId] = state.members[projectId].filter((m) => m.userId !== userId);
+    },
+    async vaultStatus() { requireOnline(); return clone(state.vault); },
+    async vaultPush(passphrase) {
+      state.lastPassphrase = passphrase; // 只有測試用來確認有傳到模組
+      state.vault = { exists: true, updatedAt: Date.now() };
+    },
+    async vaultPull(passphrase) {
+      if (passphrase === 'wrong-passphrase') throw new Error('密語錯誤，無法解開金鑰備份');
+      await store.setKey('openai', 'sk-from-vault-sync-7788');
+    },
+    async listDispatches({ role }) {
+      requireOnline();
+      return clone(state.dispatches.filter((d) => d.direction === role));
+    },
+    async dispatch(input) {
+      await sleep(80);
+      const { targetDeviceId } = input;
+      if (input.goal.includes('失敗')) throw new Error('目標裝置已不接受派工');
+      state.dispatchCalls.push(clone(input));
+      const dispatch = { id: id('d'), direction: 'outgoing', senderName: 'Harry', crossAccount: !state.devices.find((d) => d.id === targetDeviceId)?.mine, status: 'pending', sources: [], costUsd: 0, createdAt: Date.now(), ...input };
+      state.dispatches.push(dispatch);
+      return clone(dispatch);
+    },
+    async cancelDispatch(dispatchId) {
+      state.dispatches.find((d) => d.id === dispatchId).status = 'cancelled';
+    },
+  };
+}
+
+const CONSENT_SAME = { id: 'c-same', senderName: 'Harry', senderDeviceId: 'dev-air', crossAccount: false, projectId: 'p1', goal: '幫我到 Example 的價格頁，確認年繳方案的席位上限', context: [], options: { maxCostUsd: 1 }, status: 'pending', createdAt: Date.now() };
+const CONSENT_CROSS = { id: 'c-cross', senderName: '小芸', senderDeviceId: 'dev-amy', crossAccount: true, projectId: 'p1', goal: '登入公司後台，匯出上個月的訂單並回報總金額。\n<script>window.__xss = 1<\/script>\u202Eevil', context: [{ type: 'selection', text: '後台網址是……' }], options: { maxCostUsd: 5 }, status: 'pending', createdAt: Date.now() };
+
+// 跨裝置協作：主 agent 派工給兩台裝置，子 agent 提問、主 agent 回答
+function makeMeshScript({ freezeAt = null, pace = 0 }) {
+  return async ({ run, emit, abort }) => {
+    const wait = (ms) => Promise.race([sleep(ms * pace), abort]);
+    // 和 engine.js 的 runRemote 相同的形狀：device 是名稱，owner、mine 是獨立欄位
+    const air = { device: 'MacBook Air', owner: 'Harry', mine: true };
+    const amy = { device: '小芸的 MacBook Pro', owner: '小芸', mine: false };
+    const summary = '主 agent 留在這台整合結果，查價交給 MacBook Air，後台匯出交給小芸的裝置。';
+    emit(run, 'run_update', { fields: { planSummary: summary, status: 'running' } });
+    emit(run, 'plan', { summary, tasks: [], estimatedCostUsd: 0.65 });
+    const t1 = `${run.id}-t1`;
+    const t2 = `${run.id}-t2`;
+    const t3 = `${run.id}-t3`;
+    emit(run, 'task_created', { taskId: t1, title: '查三家公開牌價', agent: 'research', position: 0 });
+    emit(run, 'task_created', { taskId: t2, title: '到後台匯出上個月訂單', agent: 'browser', position: 1 });
+    emit(run, 'task_created', { taskId: t3, title: '整合成比較報告', agent: 'coding', position: 2 });
+    emit(run, 'task_update', { taskId: t1, fields: { status: 'running', provider: 'openai', model: 'gpt-6.1-sol', startedAt: Date.now() } });
+    emit(run, 'task_update', { taskId: t2, fields: { status: 'running', provider: 'anthropic', model: 'claude-opus-5-5', startedAt: Date.now() } });
+    emit(run, 'mesh_dispatch', { taskId: t1, ...air, status: 'accepted', text: '查 Example、競品 A、競品 B 的公開牌價，附官方來源' });
+    await wait(600);
+    emit(run, 'mesh_dispatch', { taskId: t2, ...amy, status: 'pending', text: '到公司後台匯出上個月的訂單，回報總金額' });
+    await wait(900);
+    emit(run, 'mesh_dispatch', { taskId: t2, ...amy, status: 'accepted' });
+    emit(run, 'mesh_question', { taskId: t1, status: 'accepted', direction: 'incoming', text: '價格要用月繳還是年繳？官網兩種都有。' });
+    await wait(800);
+    emit(run, 'mesh_answer', { taskId: t1, direction: 'outgoing', text: '兩種都列。比較表以年繳換算成每月為主。' });
+    emit(run, 'mesh_question', { taskId: t2, direction: 'incoming', text: '<img src=x onerror="window.__xss=1"> 後台有兩個帳號，要匯出哪一個？' });
+    await wait(800);
+    emit(run, 'mesh_answer', { taskId: t2, direction: 'outgoing', text: '用營運部的帳號，不要動財務部的資料。' });
+    Object.assign(run, { costUsd: 0.012, inputTokens: 9000, outputTokens: 1400 });
+    emit(run, 'usage', { provider: 'openai', model: 'gpt-6.1-sol', input: 9000, output: 1400, costUsd: 0.0120, totalCostUsd: 0.0120 });
+    if (freezeAt === 'running') await abort;
+    await wait(900);
+    emit(run, 'mesh_report', { taskId: t1, ...air, status: 'done', text: '三家牌價都查到了：$29、$35、$19（月繳）。來源已附。' });
+    emit(run, 'task_update', { taskId: t1, fields: { status: 'done', result: '三家牌價都查到了。', sources: [{ title: '官方價格頁', url: 'https://example.com/pricing' }], finishedAt: Date.now() + 40000 } });
+    await wait(900);
+    emit(run, 'mesh_report', { taskId: t2, ...amy, status: 'done', text: '上個月訂單 182 筆，總金額 NT$1,240,500。沒有修改任何資料。', costUsd: 0.0842 });
+    emit(run, 'task_update', { taskId: t2, fields: { status: 'done', result: '訂單 182 筆。', finishedAt: Date.now() + 80000 } });
+    emit(run, 'task_update', { taskId: t3, fields: { status: 'running', provider: 'anthropic', model: 'claude-opus-5-5', startedAt: Date.now() } });
+    await wait(900);
+    emit(run, 'task_update', { taskId: t3, fields: { status: 'done', result: '報告完成。', finishedAt: Date.now() + 20000 } });
+    Object.assign(run, { costUsd: 0.112, inputTokens: 21000, outputTokens: 4000 });
+    emit(run, 'usage', { provider: 'anthropic', model: 'claude-opus-5-5', input: 12000, output: 2600, costUsd: 0.1, totalCostUsd: 0.112 });
+    emit(run, 'run_update', { fields: { status: 'done', finalResult: '## 結論\n**專業版最划算**。上個月訂單 182 筆，換專業版每年可省約 18%。', finishedAt: run.createdAt + 120000 } });
+    emit(run, 'run_finished', { status: 'done' });
+  };
 }
 
 // ---------- 預設資料 ----------
@@ -443,24 +687,24 @@ const WORKFLOWS = [
   ] },
 ];
 const STATS = [
-  { provider: 'gemini', model: 'gemini-3.8-flash', agentType: 'research', successes: 18, failures: 2, totalMs: 412000, costUsd: 0.214 },
+  { provider: 'openai', model: 'gpt-6.1-terra', agentType: 'research', successes: 18, failures: 2, totalMs: 412000, costUsd: 0.214 },
   { provider: 'anthropic', model: 'claude-opus-5-5', agentType: 'coding', successes: 9, failures: 1, totalMs: 1240000, costUsd: 1.82 },
   { provider: 'openai', model: 'gpt-6.1-sol', agentType: 'review', successes: 3, failures: 4, totalMs: 310000, costUsd: 0.46 },
   { provider: 'anthropic', model: 'claude-opus-5-5', agentType: 'browser', successes: 6, failures: 0, totalMs: 620000, costUsd: 0.93 },
 ];
 const HISTORY = () => [
-  { id: 'h1', projectId: 'p1', goal: '比較這三個產品的價格，整理成表格', status: 'done', mode: 'auto', costUsd: 0.2204, createdAt: Date.now() - 3600000, finishedAt: Date.now() - 3500000, finalResult: '## 結論\n專業版最划算。', planSummary: '查價再整理', tasks: [{ id: 'h1t', title: '查價格', agent: 'research', status: 'done', provider: 'gemini', model: 'gemini-3.8-flash', sources: [{ title: '官方', url: 'https://example.com' }], position: 0 }], artifacts: [], events: [], context: [{ type: 'region', hasImage: true, url: 'https://a.example' }] },
+  { id: 'h1', projectId: 'p1', goal: '比較這三個產品的價格，整理成表格', status: 'done', mode: 'auto', costUsd: 0.2204, createdAt: Date.now() - 3600000, finishedAt: Date.now() - 3500000, finalResult: '## 結論\n專業版最划算。', planSummary: '查價再整理', tasks: [{ id: 'h1t', title: '查價格', agent: 'research', status: 'done', provider: 'openai', model: 'gpt-6.1-sol', sources: [{ title: '官方', url: 'https://example.com' }], position: 0 }], artifacts: [], events: [], context: [{ type: 'region', hasImage: true, url: 'https://a.example' }] },
   { id: 'h2', projectId: 'p1', goal: '幫我把這份報告的數字做成 3D 圖表', status: 'partial', mode: 'auto', costUsd: 0.5120, createdAt: Date.now() - 86400000, finishedAt: Date.now() - 86000000, finalResult: '已完成圖表，但審查沒有跑完。', tasks: [], artifacts: [], events: [] },
   { id: 'h3', projectId: 'p1', goal: '到後台匯出上個月的訂單', status: 'failed', mode: 'auto', costUsd: 0.0312, createdAt: Date.now() - 172800000, finishedAt: Date.now() - 172700000, error: '瀏覽器動作被拒絕，無法繼續。', tasks: [], artifacts: [], events: [] },
   { id: 'h4', projectId: 'p1', goal: '分析首頁的跳出率', status: 'cancelled', mode: 'council', costUsd: 0.0021, createdAt: Date.now() - 259200000, finishedAt: Date.now() - 259100000, error: '使用者取消', tasks: [], artifacts: [], events: [] },
 ];
-const TWO_KEYS = { anthropic: 'sk-ant-xxxxxxxxabcd', gemini: 'AIzaxxxxxxxxx9f3e' };
-const ALL_KEYS = { ...TWO_KEYS, openai: 'sk-xxxxxxxxxx71c2' };
+const ONE_KEY = { anthropic: 'sk-ant-xxxxxxxxabcd' };
+const ALL_KEYS = { ...ONE_KEY, openai: 'sk-xxxxxxxxxx71c2' };
 const DEMO_GOAL = '比較這三個產品的價格，整理成表格，並做一個可以互動的比較頁';
 
 const STATES = {
   onboarding: { label: '空狀態（沒有 API key）', keys: {} },
-  ready: { label: '任務頁（可開始）', keys: TWO_KEYS, goal: DEMO_GOAL, withContext: true },
+  ready: { label: '任務頁（可開始）', keys: ONE_KEY, goal: DEMO_GOAL, withContext: true },
   live: { label: '完整流程（真實速度）', keys: ALL_KEYS, goal: DEMO_GOAL, script: { pace: 1 } },
   planning: { label: '執行中：規劃', keys: ALL_KEYS, script: { freezeAt: 'plan-wait' }, auto: true, slowPlan: true },
   running: { label: '執行中', keys: ALL_KEYS, script: { freezeAt: 'running' }, auto: true },
@@ -470,11 +714,23 @@ const STATES = {
   partial: { label: '部分完成', keys: ALL_KEYS, script: { outcome: 'partial' }, auto: true, approveAll: true },
   failed: { label: '失敗', keys: ALL_KEYS, script: { outcome: 'failed' }, auto: true, approveAll: true },
   cancelled: { label: '已取消', keys: ALL_KEYS, script: { outcome: 'cancelled' }, auto: true, approveAll: true },
-  settings: { label: '設定頁', keys: TWO_KEYS, view: 'settings', workflows: WORKFLOWS, stats: STATS },
+  settings: { label: '設定頁', keys: ONE_KEY, view: 'settings', workflows: WORKFLOWS, stats: STATS },
   'settings-empty': { label: '設定頁（沒有資料）', keys: {}, view: 'settings' },
-  history: { label: '任務歷史', keys: TWO_KEYS, view: 'history', history: true },
+  history: { label: '任務歷史', keys: ONE_KEY, view: 'history', history: true },
   'load-error': { label: '載入失敗', keys: {}, breakStore: true },
   'real-engine': { label: '真實引擎 + 假 AI', realEngine: true, goal: DEMO_GOAL },
+  'real-cloud': { label: '真實伺服器（要帶 server 參數）', realEngine: true, goal: DEMO_GOAL },
+  'account-out': { label: '帳號：未登入', keys: ONE_KEY, view: 'account', cloud: { signedIn: false } },
+  'account-in': { label: '帳號：已登入', keys: ONE_KEY, view: 'account', cloud: {} },
+  'account-offline': { label: '帳號：連不上伺服器', keys: ONE_KEY, view: 'account', cloud: { status: 'offline', offlineLoad: true } },
+  'task-remote': { label: '任務頁：派工到其他裝置', keys: {}, cloud: {}, goal: DEMO_GOAL, withContext: true, runTarget: 'dev-amy' },
+  'task-signed-out': { label: '任務頁：未登入', keys: ONE_KEY, cloud: { signedIn: false }, goal: DEMO_GOAL },
+  dispatches: { label: '派工清單', keys: ONE_KEY, view: 'history', history: true, cloud: {} },
+  consent: { label: '同意視窗：自己的裝置', keys: ONE_KEY, cloud: {}, consent: ['same'] },
+  'consent-cross': { label: '同意視窗：其他帳號', keys: ONE_KEY, cloud: {}, consent: ['cross', 'same'] },
+  mesh: { label: '跨裝置協作：進行中', keys: ALL_KEYS, cloud: {}, meshScript: { freezeAt: 'running' }, auto: true },
+  'mesh-done': { label: '跨裝置協作：完成', keys: ALL_KEYS, cloud: {}, meshScript: {}, auto: true },
+  'mesh-live': { label: '跨裝置協作：真實速度', keys: ALL_KEYS, cloud: {}, meshScript: { pace: 1 }, goal: DEMO_GOAL },
 };
 
 // ---------- 工具列 ----------
@@ -512,7 +768,7 @@ async function boot() {
   if (width) document.documentElement.style.setProperty('--dev-width', `${Number(width)}px`);
   buildToolbar();
 
-  const real = config.realEngine ? await createRealEngineDeps() : null;
+  const real = config.realEngine ? await createRealEngineDeps({ serverUrl: params.get('server') }) : null;
   const store = real?.store ?? createFakeStore({
     keys: config.keys,
     workflows: clone(config.workflows ?? WORKFLOWS),
@@ -523,7 +779,10 @@ async function boot() {
 
   const approvals = real?.approvals ?? createApprovalQueue();
   const browser = real?.browser ?? createFakeBrowser();
-  const engine = real?.engine ?? createFakeEngine({ store, approvals, script: makeScript(config.script ?? {}) });
+  const consents = real?.consents ?? createConsentQueue();
+  const cloud = real?.cloud ?? (config.cloud ? createFakeCloud({ ...config.cloud, store }) : null);
+  const script = config.meshScript ? makeMeshScript(config.meshScript) : makeScript(config.script ?? {});
+  const engine = real?.engine ?? createFakeEngine({ store, approvals, script });
 
   // 排隊數量變動也會通知，同一個請求可能排到多個計時器，所以到點時要確認它還在佇列最前面
   const autoApprove = (shouldApprove) => approvals.subscribe((request) => {
@@ -536,7 +795,7 @@ async function boot() {
   if (config.approveUntilHigh) autoApprove((request) => request.risk !== 'high');
 
   const app = mountApp(document.getElementById('app'), {
-    engine, store, browser, approvals,
+    engine, store, browser, approvals, consents, cloud,
     catalog: { AGENT_TYPES, MODELS, ROUTES },
     previewUrl: null, // 一般網頁沒有擴充功能的安全政策，srcdoc 可以直接執行
   });
@@ -544,7 +803,7 @@ async function boot() {
   // 主題參數要蓋過 mountApp 依偏好設定的結果
   if (theme) applyTheme(theme);
 
-  window.__dev = { app, engine, store, browser, approvals };
+  window.__dev = { app, engine, store, browser, approvals, consents, cloud, policy: real?.policy, createPeer: real?.createPeer, createFullPeer: real?.createFullPeer };
 
   if (config.goal) app.setGoal(config.goal);
   if (config.withContext) {
@@ -552,6 +811,15 @@ async function boot() {
     app.addContextItem(await browser.captureContext('region'));
   }
   if (config.view) app.navigate(config.view);
+  if (config.runTarget) {
+    await sleep(60);
+    const select = document.getElementById('run-target');
+    select.value = config.runTarget;
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  for (const kind of config.consent ?? []) {
+    window.__dev.lastConsent = consents.request(kind === 'cross' ? CONSENT_CROSS : CONSENT_SAME);
+  }
   if (config.auto) {
     app.setGoal(DEMO_GOAL);
     await sleep(40);

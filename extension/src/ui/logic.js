@@ -15,11 +15,10 @@ export const AGENT_LABELS = {
 export const PROVIDERS = [
   { id: 'anthropic', label: 'Anthropic Claude', short: 'Claude', keyHint: '例如 sk-ant-…' },
   { id: 'openai', label: 'OpenAI', short: 'OpenAI', keyHint: '例如 sk-…' },
-  { id: 'gemini', label: 'Google Gemini', short: 'Gemini', keyHint: '例如 AIza…' },
 ];
 
 // 與 src/core/router.js 的 parseMentions 對齊：@claude 對應 anthropic
-const PROVIDER_ALIASES = { claude: 'anthropic', openai: 'openai', gemini: 'gemini' };
+const PROVIDER_ALIASES = { claude: 'anthropic', openai: 'openai' };
 
 export const MENTIONS = [
   { word: 'research', group: 'agent', label: AGENT_LABELS.research },
@@ -30,7 +29,6 @@ export const MENTIONS = [
   { word: 'browser', group: 'agent', label: AGENT_LABELS.browser },
   { word: 'claude', group: 'provider', label: '指定 Anthropic Claude' },
   { word: 'openai', group: 'provider', label: '指定 OpenAI' },
-  { word: 'gemini', group: 'provider', label: '指定 Google Gemini' },
 ];
 
 export const CONTEXT_KINDS = [
@@ -205,12 +203,13 @@ export function connectedProviders(keyStatus) {
 }
 
 // 回傳不能開始的原因（給使用者看的文字）；可以開始時回 null
-export function startBlocker({ goal, keyStatus, mode, workflowId, workflows = [], activeRunId, projectId }) {
+export function startBlocker({ goal, keyStatus, mode, workflowId, workflows = [], activeRunId, projectId, projectRemoteOnly = false }) {
   const connected = connectedProviders(keyStatus);
   if (activeRunId) return '目前有任務正在執行，完成或取消後才能開始新任務。';
   if (!projectId) return '還沒有可用的專案。';
+  if (projectRemoteOnly) return '這個共享專案還沒有同步到這台裝置，目前只能派工到其他裝置。';
   if (connected.length === 0) return '先設定至少一家 AI 的 API key。';
-  if (mode === 'council' && connected.length < 2) return 'AI 議會需要至少兩家 AI 的 API key。';
+  if (mode === 'council' && connected.length < 2) return 'AI 議會需要 Anthropic 與 OpenAI 兩家的 API key。';
   if (mode === 'workflow') {
     if (workflows.length === 0) return '還沒有工作流，請先到設定頁建立。';
     if (!workflows.some((w) => w.id === workflowId)) return '請選擇要執行的工作流。';
@@ -314,6 +313,7 @@ export function createRunView(seed = {}) {
     feed: [],
     browserLog: [],
     artifacts: [],
+    mesh: new Map(), // 跨裝置協作：key 是子任務，內容是派給哪台裝置與來回訊息
     seen: new Set(),
     cancelling: false,
   };
@@ -439,6 +439,31 @@ export function applyEvent(view, event) {
       // 任務已結束就不會再有結果，還卡在等待中的瀏覽器動作要標記出來，不能永遠顯示「等待中」
       for (const entry of view.browserLog) {
         if (entry.state === 'pending') entry.state = 'abandoned';
+      }
+      return true;
+    }
+    case 'mesh_dispatch':
+    case 'mesh_report':
+    case 'mesh_question':
+    case 'mesh_answer': {
+      const key = p.taskId ?? deviceLabel(p.device) ?? 'unknown';
+      let link = view.mesh.get(key);
+      if (!link) {
+        link = { key, taskId: p.taskId ?? null, device: null, owner: null, mine: null, status: 'pending', goal: null, costUsd: null, role: null, entries: [] };
+        view.mesh.set(key, link);
+      }
+      if (p.device) link.device = p.device;
+      if (p.owner) link.owner = p.owner;
+      if (typeof p.mine === 'boolean') link.mine = p.mine;
+      if (typeof p.status === 'string') link.status = p.status;
+      if (typeof p.costUsd === 'number') link.costUsd = p.costUsd;
+      // 主 agent 端有 mesh_dispatch；接到派工的裝置只有方向相反的提問與回答，這時這台才是子 agent
+      if (event.type === 'mesh_dispatch') link.role = 'main';
+      else if (!link.role && ((event.type === 'mesh_question' && p.direction === 'outgoing') || (event.type === 'mesh_answer' && p.direction === 'incoming'))) link.role = 'sub';
+      if (event.type === 'mesh_dispatch' && p.text) link.goal = String(p.text);
+      else if (p.text) {
+        const kind = { mesh_report: 'report', mesh_question: 'question', mesh_answer: 'answer' }[event.type];
+        if (kind) pushCapped(link.entries, { kind, text: String(p.text), at }, 50);
       }
       return true;
     }
@@ -649,4 +674,206 @@ export function normalizeStats(stats) {
       };
     })
     .sort((a, b) => b.attempts - a.attempts);
+}
+
+// ---------- 帳號與雲端 ----------
+
+export const CLOUD_STATUS = {
+  signed_out: { label: '未登入', lamp: 'off' },
+  connecting: { label: '連線中', lamp: 'pending' },
+  online: { label: '已連線', lamp: 'done' },
+  offline: { label: '連不上伺服器，本機功能不受影響', lamp: 'warning' },
+};
+
+export const ACCEPT_REMOTE_OPTIONS = [
+  { id: 'off', label: '不接受派工', risk: '最安全。別人和你的其他裝置都不能把任務派到這台。' },
+  { id: 'ask', label: '每次都問我', risk: '建議。每次派工都跳同意視窗，你可以看過內容再決定。' },
+  { id: 'auto', label: '自己的派工自動接受', risk: '風險較高。你的帳號被盜時，對方可以直接用這台瀏覽器和你的 API key。其他帳號的派工仍然一定會問。' },
+];
+
+// 只接受 http、https。伺服器會收到登入密碼，用 http 連到非本機位址時要警告
+export function validateServerUrl(raw) {
+  const input = String(raw ?? '').trim();
+  if (!input) return { error: '請輸入伺服器網址。' };
+  const url = safeUrl(input);
+  if (!url || url.startsWith('mailto:')) return { error: '網址要以 http:// 或 https:// 開頭。' };
+  const parsed = new URL(url);
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
+  const clean = url.replace(/\/+$/, '');
+  if (parsed.protocol === 'http:' && !local) {
+    return { url: clean, warning: '這是未加密的 http 連線，登入密碼可能被同網路的人攔截。' };
+  }
+  return { url: clean };
+}
+
+export function validateCredentials({ mode, email, password, displayName }) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email ?? '').trim())) return '請輸入有效的電子郵件。';
+  if (mode === 'register') {
+    if (!String(displayName ?? '').trim()) return '請輸入顯示名稱，其他成員會看到它。';
+    if (String(password ?? '').length < 10) return '密碼至少要 10 個字元。';
+  } else if (!password) {
+    return '請輸入密碼。';
+  }
+  return null;
+}
+
+export function validatePassphrase({ action, passphrase, confirm }) {
+  if (!passphrase) return '請輸入密語。';
+  if (action === 'push') {
+    if (passphrase.length < 10) return '密語至少要 10 個字元。';
+    if (passphrase !== confirm) return '兩次輸入的密語不一樣。密語無法找回，請再確認一次。';
+  }
+  return null;
+}
+
+export const deviceLabel = (device) => {
+  if (!device) return null;
+  if (typeof device === 'string') return stripControls(device);
+  return stripControls(device.name ?? device.id ?? '') || null;
+};
+
+export function deviceOwner(device) {
+  if (!device || typeof device !== 'object' || device.mine) return null;
+  return device.ownerName ? stripControls(device.ownerName) : null;
+}
+
+// 引擎的事件把裝置名稱、擁有者分開放（device 是字串，owner、mine 是獨立欄位）
+export function meshOwner(link) {
+  if (link.mine === true) return null;
+  if (link.owner) return stripControls(link.owner);
+  return deviceOwner(link.device);
+}
+
+// 派工對象：線上、接受派工、不是這台。自己的裝置排前面，其他帳號的要能分辨
+export function dispatchTargets(devices, thisDeviceId) {
+  return (devices ?? [])
+    .filter((d) => d.id !== thisDeviceId && d.online && d.acceptRemote !== 'off')
+    .sort((a, b) => Number(Boolean(b.mine)) - Number(Boolean(a.mine)));
+}
+
+export function targetLabel(device) {
+  const name = deviceLabel(device) ?? '未命名裝置';
+  if (device.mine) return `${name}${device.acceptRemote === 'auto' ? '（自動接受）' : '（要在該裝置同意）'}`;
+  return `${name}（${deviceOwner(device) ?? '其他帳號'}的裝置，要對方同意）`;
+}
+
+export function dispatchBlocker({ goal, signedIn, online, target, targets = [], mode, projectId }) {
+  if (!signedIn) return '登入後才能把任務派給其他裝置。';
+  if (!online) return '目前連不上伺服器，無法派工。';
+  if (!projectId) return '還沒有可用的專案。';
+  // 裝置離線時不可默默改在這台執行，使用者選的是對方的瀏覽器與 API key
+  if (!targets.some((d) => d.id === target)) return '你選的裝置已離線或不再接受派工，請重新選擇。';
+  if (mode === 'workflow') return '工作流只存在這台裝置，無法派工。';
+  if (!String(goal ?? '').trim()) return '先寫下這次要做什麼。';
+  return null;
+}
+
+// 派工內容會經過伺服器，規格不允許上傳截圖
+export function dispatchContext(context) {
+  let droppedImages = 0;
+  const items = [];
+  for (const item of context ?? []) {
+    if (item.image) droppedImages += 1;
+    if (!item.text) continue;
+    items.push({ type: item.type, text: item.text, url: item.url, title: item.title });
+  }
+  return { items, droppedImages };
+}
+
+// 本機專案加上雲端專案。共享專案要標示；只在雲端的專案本機還沒有資料
+export function mergeProjects(local, remote) {
+  const remoteById = new Map((remote ?? []).map((p) => [p.id, p]));
+  const isShared = (p) => p?.role === 'member' || Number(p?.memberCount ?? 0) > 1;
+  const merged = (local ?? []).map((p) => {
+    const r = remoteById.get(p.id);
+    return { ...p, role: r?.role ?? null, shared: isShared(r), remoteOnly: false };
+  });
+  const known = new Set(merged.map((p) => p.id));
+  for (const r of remote ?? []) {
+    if (!known.has(r.id)) merged.push({ ...r, shared: isShared(r), remoteOnly: true });
+  }
+  return merged;
+}
+
+export function canRemoveMember({ member, myUserId, myRole }) {
+  if (member.role === 'owner') return false; // 擁有者不能被移除，也不能自行退出
+  return myRole === 'owner' || member.userId === myUserId;
+}
+
+export const DISPATCH_STATUS = {
+  pending: { label: '等待對方接受', lamp: 'pending' },
+  accepted: { label: '執行中', lamp: 'running' },
+  running: { label: '執行中', lamp: 'running' },
+  done: { label: '完成', lamp: 'done' },
+  partial: { label: '部分完成', lamp: 'warning' },
+  failed: { label: '失敗', lamp: 'failed' },
+  rejected: { label: '已拒絕', lamp: 'failed' },
+  cancelled: { label: '已取消', lamp: 'off' },
+  expired: { label: '已逾期', lamp: 'off' },
+};
+export const dispatchStatus = (status) => DISPATCH_STATUS[status] ?? { label: String(status ?? '未知'), lamp: 'off' };
+export const isDispatchOpen = (status) => status === 'pending' || status === 'accepted' || status === 'running';
+
+export function mergeDispatches(incoming, outgoing) {
+  const byId = new Map();
+  for (const d of outgoing ?? []) byId.set(d.id, { ...d, direction: 'outgoing' });
+  // 派給自己其他裝置時兩邊都有；在這台要顯示成發出，所以發出優先
+  for (const d of incoming ?? []) if (!byId.has(d.id)) byId.set(d.id, { ...d, direction: 'incoming' });
+  return [...byId.values()].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+}
+
+// 伺服器沒明確說是同帳號，就當成其他帳號：寧可多一層警告
+export const isCrossAccount = (dispatch) => dispatch?.crossAccount !== false;
+
+// 預算取派工要求與本機設定的較小值（docs/cloud-api.md 的安全規則）
+export function consentBudget(dispatch, localMax) {
+  const values = [dispatch?.options?.maxCostUsd, localMax].filter((v) => typeof v === 'number' && Number.isFinite(v) && v > 0);
+  return values.length ? Math.min(...values) : null;
+}
+
+// 同意佇列：與批准佇列相同的一次一個、排隊處理，回傳格式是 { accepted, reason? }
+export function createConsentQueue() {
+  const queue = createApprovalQueue();
+  return {
+    request: (dispatch) => queue.request({ ...dispatch, runId: dispatch.id }).then((answer) => {
+      const result = { accepted: answer.approved };
+      if (answer.note) result.reason = answer.note;
+      return result;
+    }),
+    current: queue.current,
+    waiting: queue.waiting,
+    respond: queue.respond,
+    // 派工被發起方取消或逾期時，不該繼續問使用者
+    dismiss: (dispatchId, reason = '派工已結束') => queue.dismissRun(dispatchId, reason),
+    dismissAll(reason = '已登出') {
+      let current = queue.current();
+      while (current) {
+        queue.dismissRun(current.runId, reason);
+        current = queue.current();
+      }
+    },
+    subscribe: queue.subscribe,
+  };
+}
+
+// 批准模式：其他帳號的派工要逐步批准，不受使用者的 risky 設定影響。
+// 瀏覽器模組沒傳 runId 時無法分辨任務，只要有強制中的任務就一律用最嚴格的模式。
+export function createApprovalPolicy(initialMode = 'always') {
+  let mode = initialMode === 'risky' ? 'risky' : 'always';
+  const forced = new Set();
+  return {
+    getApprovalMode({ runId } = {}) {
+      if (runId === undefined || runId === null) return forced.size ? 'always' : mode;
+      return forced.has(runId) ? 'always' : mode;
+    },
+    setMode(next) {
+      mode = next === 'risky' ? 'risky' : 'always';
+    },
+    force: (runId) => {
+      forced.add(runId);
+    },
+    release: (runId) => {
+      forced.delete(runId);
+    },
+  };
 }

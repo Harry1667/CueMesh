@@ -884,6 +884,92 @@ a { color: inherit; }
 .stats__count { display: block; font-size: 10.5px; color: var(--ink-soft); white-space: nowrap; }
 .stats__num { font: 500 11.5px var(--mono); white-space: nowrap; }
 
+/* ---------- 帳號 ---------- */
+.nav__item { padding-left: 7px; padding-right: 7px; }
+.account-status { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; min-width: 0; }
+.view--account .block-head { align-items: flex-start; }
+.view--account .view-title { margin-bottom: 8px; }
+.hint[data-kind='warning'] { color: var(--amber-text); font-weight: 600; }
+.subhead { font: 700 13.5px/1.4 var(--serif); margin: 14px 0 3px; }
+.auth-form .modes { margin-bottom: 4px; }
+.auth-form .btn--block { margin-top: 12px; }
+.account-user__row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.account-user__body { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.account-server { margin-bottom: 8px; overflow-wrap: anywhere; }
+.device-list, .member-list, .dispatch-list { list-style: none; margin: 0; padding: 0; }
+.device, .member { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px dotted var(--rule); min-width: 0; }
+.device:first-child, .member:first-child { border-top: 0; }
+.device__body, .member__body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.device__name, .member__name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.device__meta, .member__meta { font-size: 12px; color: var(--ink-soft); overflow-wrap: anywhere; }
+.device__this { font-size: 10.5px; }
+.warning-box { padding: 7px 10px; margin-bottom: 8px; border-left: 4px solid var(--amber); background: var(--amber-soft); font-size: 12.5px; overflow-wrap: anywhere; }
+.warning-box strong { color: var(--amber-text); }
+.warning-box p { margin-top: 2px; }
+.vault__actions { margin-top: 10px; }
+.vault__push { display: inline-flex; }
+.member-project { font-weight: 600; margin-bottom: 8px; overflow-wrap: anywhere; }
+.invite__code { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 6px 8px; background: var(--paper-sunken); border-left: 3px solid var(--seal); min-width: 0; }
+.invite__value { flex: 1; min-width: 0; font: 700 13px var(--mono); overflow-wrap: anywhere; }
+.guide__alt { margin-top: 6px; font-size: 12.5px; text-align: left; }
+#run-target option:disabled { color: var(--ink-faint); }
+
+/* ---------- 派工清單 ---------- */
+.dispatches { margin-bottom: 20px; padding-bottom: 8px; border-bottom: 3px double var(--ink); }
+.dispatch { position: relative; padding: 8px 0; border-top: 1px solid var(--rule); min-width: 0; }
+.dispatch:first-child { border-top: 0; }
+.dispatch > .lamp {
+  position: absolute;
+  top: 12px;
+  left: calc(var(--margin-x) + 1.5px - var(--gutter) - 5.5px);
+  outline: 3px solid var(--paper);
+}
+.dispatch__body { min-width: 0; }
+.dispatch__goal { font-weight: 600; overflow-wrap: anywhere; }
+.dispatch__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; margin-top: 3px; font-size: 12px; color: var(--ink-soft); min-width: 0; }
+.dispatch__meta .tag { white-space: normal; overflow-wrap: anywhere; color: var(--ink); min-width: 0; }
+.dispatch__meta .tag--accent { color: var(--seal); }
+.dispatch__state { color: var(--ink); }
+.dispatch[data-status='failed'] .dispatch__state, .dispatch[data-status='rejected'] .dispatch__state { color: var(--danger); }
+.dispatch__cancel { margin-top: 6px; }
+
+/* ---------- 同意視窗 ---------- */
+.consent__title { overflow-wrap: anywhere; font-size: 19px; }
+.consent__goal { max-height: 112px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-weight: 600; }
+.consent__budget { display: block; font-family: var(--mono); font-size: 14px; }
+.consent__payer { display: block; font-size: 12.5px; font-weight: 700; color: var(--amber-text); }
+.consent__warning { margin: 0 12px 8px; }
+.approval[data-risk='high'] .consent__warning { border-left-color: var(--danger); background: var(--danger-soft); }
+.approval[data-risk='high'] .consent__warning strong { color: var(--danger); }
+.approval[data-risk='high'] .consent__payer { color: var(--danger); }
+
+/* ---------- 跨裝置協作 ---------- */
+.mesh { padding: 10px 10px 4px; background: var(--paper-raised); border: 1.5px solid var(--ink); box-shadow: 4px 4px 0 var(--seal); min-width: 0; }
+.mesh .block-head { margin-bottom: 8px; }
+.mesh__hub { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 7px; padding: 6px 8px; background: var(--ink); color: var(--paper); font-size: 13px; }
+.mesh__hub .muted { color: inherit; opacity: 0.8; font-size: 12px; }
+.mesh__nodes { list-style: none; margin: 0; padding: 0 0 0 16px; border-left: 2px dashed var(--seal); margin-left: 8px; }
+.mesh__node { position: relative; padding: 10px 0 8px; border-bottom: 1px dotted var(--rule); min-width: 0; }
+.mesh__node:last-child { border-bottom: 0; }
+.mesh__node::before { content: ''; position: absolute; top: 20px; left: -16px; width: 12px; border-top: 2px dashed var(--seal); }
+.mesh__device { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.mesh__lamp { margin-top: 4px; }
+.mesh__device-body { flex: 1; min-width: 0; }
+.mesh__name { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; font-weight: 700; overflow-wrap: anywhere; min-width: 0; }
+.mesh__name .tag { white-space: normal; overflow-wrap: anywhere; }
+.mesh__state { font-size: 12px; color: var(--ink-soft); }
+.mesh__goal { margin-top: 5px; font-size: 12.5px; overflow-wrap: anywhere; }
+.mesh__label { display: block; font-size: 11px; font-weight: 700; color: var(--ink-soft); }
+.mesh__thread { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 5px; }
+.mesh__msg { padding: 4px 8px; font-size: 12.5px; overflow-wrap: anywhere; min-width: 0; border-left: 3px solid var(--ink-faint); background: var(--paper-sunken); }
+.mesh__msg--question { border-left-color: var(--amber); background: var(--amber-soft); margin-right: 14px; }
+.mesh__msg--question .mesh__label { color: var(--amber-text); }
+.mesh__msg--answer { border-left-color: var(--seal); margin-left: 14px; }
+.mesh__msg--answer .mesh__label { color: var(--seal); }
+.mesh__msg--report { border-left-color: var(--go); }
+.mesh__msg--report .mesh__label { color: var(--go); }
+.mesh__text { display: block; white-space: pre-wrap; }
+
 /* ---------- 提示訊息 ---------- */
 .toast {
   position: fixed;

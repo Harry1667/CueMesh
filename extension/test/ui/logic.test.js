@@ -3,7 +3,7 @@ import { test, describe } from 'node:test';
 import {
   applyEvent, applyMention, buildStartOptions, collectSources, createApprovalQueue, createRunView, describeArgs,
   describeElement, describeUrl, filterMentions, findMentionQuery, formatDuration, formatUsd, imageDataUrl, mergeRun,
-  mentionedProviders, moveItem, normalizeRunRow, normalizeStats, parseMaxCost, retryContext, safeFilename, startBlocker,
+  mentionedProviders, moveItem, normalizeRunRow, normalizeStats, parseMaxCost, PROVIDERS, retryContext, safeFilename, startBlocker,
   stripControls, taskProgress, taskTree, validateWorkflow, workflowPayload,
 } from '../../src/ui/logic.js';
 
@@ -56,7 +56,7 @@ describe('applyEvent：事件處理', () => {
   test('task_created 與 task_update 更新子任務，含來源 JSON 與資料庫欄位', () => {
     const v = view();
     applyEvent(v, ev('task_created', { taskId: 't1', parentTaskId: null, title: '查價格', agent: 'research', position: 0 }));
-    applyEvent(v, ev('task_update', { taskId: 't1', fields: { status: 'running', provider: 'gemini', model: 'gemini-3.8-flash', started_at: 5 } }));
+    applyEvent(v, ev('task_update', { taskId: 't1', fields: { status: 'running', provider: 'openai', model: 'gpt-6.1-sol', started_at: 5 } }));
     applyEvent(v, ev('task_update', {
       taskId: 't1',
       fields: {
@@ -68,7 +68,7 @@ describe('applyEvent：事件處理', () => {
     }));
     const task = v.tasks.get('t1');
     assert.equal(task.status, 'done');
-    assert.equal(task.model, 'gemini-3.8-flash');
+    assert.equal(task.model, 'gpt-6.1-sol');
     assert.equal(task.startedAt, 5);
     assert.equal(task.finishedAt, 9);
     assert.deepEqual(task.sources, [{ title: '官網', url: 'https://example.com/' }]);
@@ -333,10 +333,10 @@ describe('@ 自動完成', () => {
     assert.deepEqual(findMentionQuery('@re 後面', 3), { query: 're', start: 0, end: 3 });
   });
 
-  test('任務指定的九個提及都有，能依前綴篩選', () => {
+  test('八個提及都有，能依前綴篩選', () => {
     assert.deepEqual(
       filterMentions('').map((m) => m.word),
-      ['research', 'coding', '3d', 'vision', 'review', 'browser', 'claude', 'openai', 'gemini'],
+      ['research', 'coding', '3d', 'vision', 'review', 'browser', 'claude', 'openai'],
     );
     assert.deepEqual(filterMentions('RE').map((m) => m.word), ['research', 'review']);
     assert.deepEqual(filterMentions('zzz'), []);
@@ -349,8 +349,15 @@ describe('@ 自動完成', () => {
     assert.deepEqual(applyMention('@re', findMentionQuery('@re', 3), 'research'), { text: '@research ', caret: 10 });
   });
 
+  test('已移除的 Gemini 不再是選項', () => {
+    assert.deepEqual(filterMentions('ge'), []);
+    assert.deepEqual(filterMentions('goo'), []);
+    assert.deepEqual(mentionedProviders('@gemini @google 幫我'), []);
+    assert.deepEqual(PROVIDERS.map((p) => p.id), ['anthropic', 'openai']);
+  });
+
   test('解析指定的供應商，含 @claude 別名', () => {
-    assert.deepEqual(mentionedProviders('@claude 和 @gemini 比較 @research'), ['anthropic', 'gemini']);
+    assert.deepEqual(mentionedProviders('@claude 和 @openai 比較 @research'), ['anthropic', 'openai']);
     assert.deepEqual(mentionedProviders('沒有提及'), []);
   });
 });
@@ -365,7 +372,7 @@ describe('開始任務的條件', () => {
   test('沒有專案', () => assert.match(startBlocker({ ...ok, projectId: null }), /專案/));
   test('AI 議會需要兩家', () => {
     assert.match(startBlocker({ ...ok, mode: 'council' }), /兩家/);
-    const two = { anthropic: { set: true }, gemini: { set: true } };
+    const two = { anthropic: { set: true }, openai: { set: true } };
     assert.equal(startBlocker({ ...ok, mode: 'council', keyStatus: two }), null);
   });
   test('工作流模式要選工作流', () => {
@@ -375,7 +382,7 @@ describe('開始任務的條件', () => {
     assert.equal(startBlocker({ ...ok, mode: 'workflow', workflows, workflowId: 'w1' }), null);
   });
   test('@ 指定了沒有 key 的 AI', () => {
-    assert.match(startBlocker({ ...ok, goal: '@gemini 幫我' }), /Google Gemini/);
+    assert.match(startBlocker({ ...ok, goal: '@openai 幫我' }), /OpenAI/);
     assert.equal(startBlocker({ ...ok, goal: '@claude 幫我' }), null);
   });
 
@@ -466,7 +473,7 @@ describe('設定頁邏輯', () => {
   });
 
   test('模型統計計算成功率與平均耗時，接受資料庫欄位', () => {
-    const [row] = normalizeStats([{ provider: 'gemini', model: 'm', agent_type: 'research', successes: 3, failures: 1, total_ms: 8000, cost_usd: 0.4 }]);
+    const [row] = normalizeStats([{ provider: 'openai', model: 'm', agent_type: 'research', successes: 3, failures: 1, total_ms: 8000, cost_usd: 0.4 }]);
     assert.equal(row.rate, 0.75);
     assert.equal(row.avgMs, 2000);
     assert.equal(row.agent, 'research');

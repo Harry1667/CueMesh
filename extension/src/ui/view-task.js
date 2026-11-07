@@ -2,18 +2,18 @@
 import { h, icon } from './dom.js';
 import {
   applyMention, CONTEXT_KINDS, connectedProviders, filterMentions, findMentionQuery, formatUsd, hostOf, imageDataUrl,
-  PROVIDERS, clip, startBlocker,
+  PROVIDERS, clip, dispatchContext, dispatchTargets, isDispatchOpen, targetLabel,
 } from './logic.js';
 
 const MODES = [
   { id: 'auto', label: '自動', hint: '由 AI 拆解工作，分給最適合的 agent。' },
-  { id: 'council', label: 'AI 議會', hint: '多家 AI 各自作答，再整理共識與分歧。至少要兩家的 API key。' },
+  { id: 'council', label: 'AI 議會', hint: 'Claude 與 OpenAI 各自作答，再整理共識與分歧。需要兩家的 API key。' },
   { id: 'workflow', label: '工作流', hint: '照你存好的固定步驟執行。' },
 ];
 const CONTEXT_ICONS = { selection: 'selection', region: 'region', element: 'element', page: 'page' };
 const CONTEXT_LABELS = Object.fromEntries(CONTEXT_KINDS.map((c) => [c.kind, c.label]));
 
-export function createTaskView({ S, actions, blockerInput }) {
+export function createTaskView({ S, actions, getBlocker, cloud }) {
   // ---------- 引導 ----------
   const guideLamps = h('ul', { class: 'guide__lamps' });
   const guide = h('section', { class: 'guide', 'aria-labelledby': 'guide-title', hidden: true },
@@ -26,7 +26,8 @@ export function createTaskView({ S, actions, blockerInput }) {
       class: 'btn btn--primary btn--block',
       onClick: () => actions.openSettings('keys'),
     }, icon('key'), '設定 API key'),
-    h('p', { class: 'guide__note' }, 'key 只存在這個瀏覽器，不會傳給 CueMesh 網站。費用由各家 AI 依用量向你收取。'));
+    h('p', { class: 'guide__note' }, 'key 只存在這個瀏覽器，不會傳給 CueMesh 網站。費用由各家 AI 依用量向你收取。'),
+    cloud && h('button', { type: 'button', class: 'linkbtn guide__alt', onClick: () => actions.navigate('account') }, '已經在其他裝置設定過？登入後用金鑰同步下載'));
 
   // ---------- 執行中提示 ----------
   const activeBanner = h('div', { class: 'callout callout--live', hidden: true },
@@ -210,6 +211,50 @@ export function createTaskView({ S, actions, blockerInput }) {
     onClick: () => actions.openSettings('workflows'),
   }, '到設定頁建立工作流');
 
+  // ---------- 在哪裡執行 ----------
+  const targetSelect = h('select', {
+    id: 'run-target',
+    class: 'select',
+    onChange: (e) => actions.setRunTarget(e.target.value),
+  });
+  const targetHint = h('p', { class: 'hint', id: 'run-target-hint' });
+  const targetLogin = h('button', { type: 'button', class: 'linkbtn', hidden: true, onClick: () => actions.navigate('account') }, '前往登入');
+  let lastTargetSig = null;
+
+  function paintTarget() {
+    const { user, device, devices } = S.cloudState;
+    const targets = user ? dispatchTargets(devices, device?.id) : [];
+    const stale = S.runTarget !== 'local' && !targets.some((d) => d.id === S.runTarget);
+    const sig = JSON.stringify([targets.map((d) => [d.id, d.name, d.ownerName, d.mine, d.acceptRemote]), stale ? S.runTarget : null]);
+    if (sig !== lastTargetSig) {
+      lastTargetSig = sig;
+      const mine = targets.filter((d) => d.mine);
+      const others = targets.filter((d) => !d.mine);
+      const option = (d) => h('option', { value: d.id }, targetLabel(d));
+      targetSelect.replaceChildren(
+        h('option', { value: 'local' }, '這台裝置'),
+        ...(mine.length ? [h('optgroup', { label: '我的其他裝置' }, mine.map(option))] : []),
+        ...(others.length ? [h('optgroup', { label: '其他帳號的裝置' }, others.map(option))] : []),
+        // 選的裝置離線了：留著顯示並擋下開始，不可默默改在這台執行
+        ...(stale ? [h('option', { value: S.runTarget, disabled: true }, '已離線的裝置')] : []),
+      );
+    }
+    targetSelect.value = S.runTarget;
+    targetSelect.disabled = !user && S.runTarget === 'local';
+    targetLogin.hidden = Boolean(user) || !cloud;
+
+    const selected = targets.find((d) => d.id === S.runTarget);
+    if (!cloud) targetHint.textContent = '這個版本沒有雲端模組，任務會在這台執行。';
+    else if (!user) targetHint.textContent = '任務會在這台執行。登入後可以派給其他裝置。';
+    else if (S.runTarget === 'local') targetHint.textContent = targets.length ? '用這台的瀏覽器與 API key。' : '目前沒有其他線上且接受派工的裝置。';
+    else if (selected?.mine) targetHint.textContent = '用那台裝置的瀏覽器與 API key 執行，結果會回報到歷史頁。';
+    else if (selected) targetHint.textContent = `會用 ${selected.ownerName ?? '對方'} 的瀏覽器與 API key 執行，對方同意後才會開始。你的目標與文字情境會傳給對方。`;
+    else targetHint.textContent = '';
+
+    const { droppedImages } = dispatchContext(S.context);
+    if (S.runTarget !== 'local' && droppedImages) targetHint.textContent += `截圖不會傳送（${droppedImages} 張）。`;
+  }
+
   // ---------- 開始與取消 ----------
   const startLabel = h('span', null, '開始');
   const startBtn = h('button', {
@@ -247,6 +292,10 @@ export function createTaskView({ S, actions, blockerInput }) {
       modeHint,
       workflowRow,
       workflowEmpty),
+    section('四', 'target-title', h('label', { for: 'run-target' }, '在哪裡執行'),
+      targetSelect,
+      targetHint,
+      targetLogin),
     h('div', { class: 'cue-bar' },
       blockerEl,
       startError,
@@ -258,7 +307,8 @@ export function createTaskView({ S, actions, blockerInput }) {
 
   function update() {
     const connected = connectedProviders(S.keyStatus);
-    guide.hidden = connected.length > 0;
+    // 派工用的是對方的 key，這台沒有 key 也能做，不用引導卡佔住畫面
+    guide.hidden = connected.length > 0 || S.runTarget !== 'local';
     guideLamps.replaceChildren(...PROVIDERS.map((p) => h('li', { class: 'guide__lamp' },
       h('span', { class: 'lamp', 'data-status': 'pending', 'aria-hidden': 'true' }),
       p.label)));
@@ -306,10 +356,12 @@ export function createTaskView({ S, actions, blockerInput }) {
     }
     if (S.workflowId) workflowSelect.value = S.workflowId;
 
-    const blocker = startBlocker(blockerInput());
+    paintTarget();
+    const remote = S.runTarget !== 'local';
+    const blocker = getBlocker();
     startBtn.disabled = Boolean(blocker) || S.starting;
     startBtn.classList.toggle('is-ready', !blocker && !S.starting);
-    startLabel.textContent = S.starting ? '啟動中…' : '開始';
+    startLabel.textContent = S.starting ? '啟動中…' : remote ? '派工' : '開始';
     if (blocker) startBtn.setAttribute('aria-describedby', 'start-blocker');
     else startBtn.removeAttribute('aria-describedby');
     blockerEl.textContent = blocker ?? '';
@@ -322,7 +374,10 @@ export function createTaskView({ S, actions, blockerInput }) {
     startError.textContent = S.startError ?? '';
 
     const approvalText = S.settings.approvalMode === 'risky' ? '只問高風險動作' : '每個動作都先問你';
-    summary.textContent = `預算上限 ${formatUsd(S.settings.maxCostUsd)}，瀏覽器動作${approvalText}。`;
+    const openCount = S.cloudState.dispatches.filter((d) => isDispatchOpen(d.status)).length;
+    summary.textContent = remote
+      ? `要求預算上限 ${formatUsd(S.settings.maxCostUsd)}，瀏覽器動作由執行的裝置批准。`
+      : `預算上限 ${formatUsd(S.settings.maxCostUsd)}，瀏覽器動作${approvalText}。${openCount ? `有 ${openCount} 筆派工進行中，見歷史頁。` : ''}`;
   }
 
   return {
