@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- 開發預覽：用假的 engine／store／browser 在一般瀏覽器檢視所有狀態。不會打包進擴充功能，也不會呼叫任何 AI。
+     啟動方式（在 extension/ 目錄）：node src/ui/dev-server.mjs，再開 http://127.0.0.1:5199/src/ui/dev.html -->
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>CueMesh 開發預覽</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="sidepanel.css" />
+    <style>
+      body.dev { display: flex; height: 100vh; overflow: hidden; background: #2b2723; }
+      .dev__bar { flex: none; width: 220px; padding: 14px; overflow-y: auto; color: #efe7d6; font-size: 13px; }
+      .dev__bar h1 { font-size: 14px; margin: 0 0 8px; }
+      .dev__bar h2 { font-size: 12px; margin: 14px 0 4px; color: #b9af9a; font-weight: 600; }
+      .dev__bar a { display: block; padding: 3px 6px; color: #efe7d6; text-decoration: none; }
+      .dev__bar a:hover { background: #444; }
+      .dev__bar a[aria-current='true'] { background: #e8542f; color: #190d08; font-weight: 700; }
+      .dev__frame { flex: none; width: var(--dev-width, 400px); height: 100vh; background: var(--paper); box-shadow: 0 0 0 1px #000; }
+      .dev__frame #app { height: 100vh; }
+      /* bare=1：沒有工具列，讓截圖與面板實際大小一致 */
+      body.dev--bare { display: block; background: var(--paper); }
+      body.dev--bare .dev__bar { display: none; }
+      body.dev--bare .dev__frame { width: 100%; box-shadow: none; }
+    </style>
+  </head>
+  <body class="dev">
+    <aside class="dev__bar" id="dev-bar" aria-label="開發預覽工具"></aside>
+    <div class="dev__frame"><div id="app"></div></div>
+    <script type="module" src="dev.js"></script>
+  </body>
+</html>

@@ -1,0 +1,24 @@
+<!doctype html>
+<!--
+  HTML 成果的沙盒頁面。必須列在 manifest 的 sandbox.pages：
+  擴充功能頁面的安全政策會擋行內指令碼，而 srcdoc 會繼承它，AI 產生的網頁（例如 Three.js 場景）就跑不起來。
+  沙盒頁面有獨立的不透明來源，碰不到 chrome API 與 chrome.storage，所以可以安全地執行不可信的內容。
+-->
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <title>CueMesh 預覽</title>
+  </head>
+  <body>
+    <script>
+      window.addEventListener('message', (event) => {
+        // 只接受嵌入本頁的側邊面板傳來的內容；沙盒內容自己發的訊息不算
+        if (event.source !== window.parent) return;
+        if (event.data?.type !== 'cuemesh-preview' || typeof event.data.html !== 'string') return;
+        document.open();
+        document.write(event.data.html);
+        document.close();
+      });
+    </script>
+  </body>
+</html>
