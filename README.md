@@ -8,6 +8,14 @@ CueMesh 是一個能實際操作瀏覽器的 Chrome 擴充功能。你指著畫�
 
 > 狀態：開發中，目前還沒有可用版本。專題 demo 版，前身代號為 OmniLayer。
 
+## 線上服務
+
+- 網站：<https://cuemesh.looptw.com>
+- API：<https://cuemesh.looptw.com/api>（程式在 `server/`，健康檢查是 `/api/health`）
+- 擴充功能：在 `extension/` 執行 `npm install && npm run build`，到 `chrome://extensions` 開啟開發人員模式，載入 `extension/dist`。預設連到上面的 API。
+
+AI 的 API key 由每位使用者在擴充功能裡自行輸入，不放在 repo。網站自行部署時，要把 `website/public/runtime-config.json` 的 `dataMode` 改成 `live`，否則會顯示示範資料。
+
 ## 它解決什麼問題
 
 用 AI 工作時，時間常花在這三件事上：
