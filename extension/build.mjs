@@ -15,6 +15,7 @@ const options = {
     background: 'src/background.js',
     sidepanel: 'src/ui/sidepanel.js',
     content: 'src/content/index.js',
+    'theme-icon': 'src/theme-icon.js',
   },
   outdir: 'dist',
   bundle: true,

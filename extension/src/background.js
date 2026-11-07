@@ -13,6 +13,27 @@ async function logFailure(label, promise) {
   }
 }
 
+// ---- 工具列圖示跟著深淺色切換：深色用白色 Logo，淺色用黑色 Logo ----
+const THEME_DOCUMENT = 'theme-icon.html';
+const iconPaths = (prefix) => Object.fromEntries([16, 32, 48, 128].map((size) => [size, `icons/${prefix}-${size}.png`]));
+
+async function ensureThemeDocument() {
+  if (await chrome.offscreen.hasDocument()) return;
+  await chrome.offscreen.createDocument({
+    url: THEME_DOCUMENT,
+    reasons: ['MATCH_MEDIA'],
+    justification: '偵測深淺色模式，切換工具列圖示',
+  });
+}
+
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type !== 'cuemesh:color-scheme') return;
+  void logFailure('切換工具列圖示', chrome.action.setIcon({ path: iconPaths(message.dark ? 'icon-light' : 'icon') }));
+});
+
+// service worker 每次啟動都會跑到這裡，瀏覽器重開後也一樣，不需要另外監聽 onStartup
+void logFailure('偵測深淺色', ensureThemeDocument());
+
 chrome.runtime.onInstalled.addListener(() => {
   void logFailure('設定側邊面板', chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }));
   chrome.contextMenus.create({ id: MENU_ASK, title: '用 CueMesh 處理選取的文字', contexts: ['selection'] });

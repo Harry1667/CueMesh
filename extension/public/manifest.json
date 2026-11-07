@@ -11,7 +11,7 @@
   },
   "background": { "service_worker": "background.js", "type": "module" },
   "side_panel": { "default_path": "sidepanel.html" },
-  "permissions": ["sidePanel", "scripting", "tabs", "storage", "unlimitedStorage", "contextMenus"],
+  "permissions": ["sidePanel", "scripting", "tabs", "storage", "unlimitedStorage", "contextMenus", "offscreen"],
   "host_permissions": ["<all_urls>"],
   "sandbox": { "pages": ["preview-sandbox.html"] },
   "content_security_policy": {
