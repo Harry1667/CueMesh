@@ -4,13 +4,13 @@
 
 網站只負責畫面，帳號統一呼叫 `server/`。依據 main `c03029375b14160bd9b39b65cd97e772d7416124` 的根目錄 `docs/cloud-api.md` 與 `docs/integration-contract.md`。本文件取代舊的 /api/web/v1、cookie、CSRF、配對 token 與 Supabase 提案；那些不是目前的實作。
 
-開發 origin 是 **http://127.0.0.1:4180**，已通知在 [GitHub issue #1](https://github.com/Harry1667/CueMesh/issues/1)。請把精確 origin 加入 `WEBSITE_ORIGINS`；不要加路徑。這是 Ethan 電腦的 loopback，不能當作 Harry 可遠端開啟的網址。Oracle 公開 origin 與測試 API URL 尚未提供。
+開發 origin 是 **http://127.0.0.1:4180**，已通知在 [GitHub issue #1](https://github.com/Harry1667/CueMesh/issues/1)。這是 Ethan 電腦的 loopback，不能當作 Harry 可遠端開啟的網址。2026-11-07 已從 extension 設定確認公開 origin 為 **https://cuemesh.looptw.com**，並觀察到網站登入畫面與 `/api/me` 的 JSON 401。公開 API 對開發 origin 的預檢回傳 204 與相符的允許來源；尚未驗證真人登入或跨裝置派工。
 
 Frontend branch: `web/cuemesh-experience`. Changes stay inside `website/`. Harry owns server, extension execution, data storage, authorization and hosting infrastructure.
 
 ## Transport and authentication
 
-- Default `/api`; Vite/Nginx forwards the full path to loopback port 8000.
+- Default `/api`. Vite development/preview forwards the full path to `https://cuemesh.looptw.com`; override with `CUEMESH_API_TARGET` for a local API. The Oracle Nginx example uses loopback port 3000, matching the audited server default; change it if the service sets a different `PORT`.
 - JSON, `Accept-Language`, `Authorization: Bearer <token>`, `credentials: omit`, no-store, 12-second client timeout.
 - Token exists only in AuthProvider memory. Reload signs out. A 401 clears auth; logout clears locally even if server revocation fails, and reports that failure.
 - No cookie/CSRF flow, OAuth endpoints, Supabase, local accounts or provider-key input.
@@ -19,23 +19,23 @@ Frontend branch: `web/cuemesh-experience`. Changes stay inside `website/`. Harry
 
 ## Consumed endpoints
 
-| Method/path (under /api)                  | Request / response                                                   |
-| ----------------------------------------- | -------------------------------------------------------------------- |
-| POST /auth/register                       | {email,password,displayName} → 201 {token,user}; password minimum 10 |
-| POST /auth/login                          | {email,password} → {token,user}                                      |
-| POST /auth/logout                         | No body → 204                                                        |
-| GET /me                                   | {user}                                                               |
-| GET /devices                              | {devices}; account view filters mine                                 |
-| GET /projects                             | {projects}, including owner/member role                              |
-| PUT /projects/:id                         | {name,description} → {project}; client UUID                          |
-| POST /projects/:id/invites                | {} → 201 {code,expiresAt}; owner only                                |
-| POST /invites/accept                      | {code} → {project}                                                   |
-| GET /projects/:id/members                 | {members}                                                            |
-| GET /projects/:id/runs                    | {runs}; summaries                                                    |
-| GET /runs/:id                             | {run}; embeds tasks/events/artifacts                                 |
-| GET /dispatches?role=incoming or outgoing | {dispatches}; merge and deduplicate                                  |
-| GET /dispatches/:id                       | {dispatch,messages}                                                  |
-| POST /dispatches/:id/messages             | {id,kind,text,replyTo} → 201 {message}                               |
+| Method/path (under /api)                  | Request / response                                                                            |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------- |
+| POST /auth/register                       | {email,password,displayName} → 201 {token,user}; password minimum 10, display name maximum 80 |
+| POST /auth/login                          | {email,password} → {token,user}                                                               |
+| POST /auth/logout                         | No body → 204                                                                                 |
+| GET /me                                   | {user}                                                                                        |
+| GET /devices                              | {devices}; account view filters mine                                                          |
+| GET /projects                             | {projects}, including owner/member role                                                       |
+| PUT /projects/:id                         | {name,description} → {project}; client UUID                                                   |
+| POST /projects/:id/invites                | {} → 201 {code,expiresAt}; owner only                                                         |
+| POST /invites/accept                      | {code} → {project}                                                                            |
+| GET /projects/:id/members                 | {members}                                                                                     |
+| GET /projects/:id/runs                    | {runs}; summaries                                                                             |
+| GET /runs/:id                             | {run}; embeds tasks/events/artifacts                                                          |
+| GET /dispatches?role=incoming or outgoing | {dispatches}; merge and deduplicate                                                           |
+| GET /dispatches/:id                       | {dispatch,messages}                                                                           |
+| POST /dispatches/:id/messages             | {id,kind,text,replyTo} → 201 {message}                                                        |
 
 Message kind is question, answer or progress; text is limited to 20 KB UTF-8. A retry retains its message UUID. A successful POST means the service saved a message, not that work finished. Responses from a prior selected handoff/project cannot replace the current one.
 
@@ -69,16 +69,16 @@ The user's latest supplied table takes precedence for the website demo:
 | review   | gpt-6.1-sol     | claude-opus-5-5                  |
 | browser  | claude-opus-5-5 | claude-sonnet-5-5, gpt-6.1-terra |
 
-Source: `src/data/modelRouting.ts`. This is example presentation, not an API-availability assertion or execution routing. It differs from the Gemini recommendations in root `docs/model-comparison.md`; that shared file was deliberately not changed. Confirm actual extension routing separately. Live cards always display the received task.model; unknown IDs remain unchanged.
+Source: `src/data/modelRouting.ts`. This is example presentation, not an API-availability assertion or execution routing. Shared routing documents and extension code remain owned by Harry. Confirm actual provider/model access before recording. Live cards always display the received task.model; unknown IDs remain unchanged.
 
 ## Integration acceptance
 
-1. Start server v1 at port 8000 and add the exact dev origin. Launch the website at port 4180.
-2. Verify real registration/login/logout, rate limits, invalid credentials and token expiry. Reload must sign out.
+1. Use the deployed API, or start server v1 at port 3000 and set `CUEMESH_API_TARGET=http://127.0.0.1:3000`. Launch the website at port 4180. Configure exact origins, without paths, in `WEBSITE_ORIGINS` for direct cross-origin clients.
+2. Verify real registration/login/logout, rate limits, invalid credentials and token revocation. Reload must sign out. The audited server does not currently expire tokens automatically.
 3. Sync an actual extension run; confirm project/run IDs, all task states, activity, cost estimates and artifact content.
 4. Create/join a shared project, issue a one-use invite and verify membership permission changes.
 5. Confirm incoming/outgoing handoffs, context, messages and duplicate UUID retry behavior across two real accounts.
 6. Check permission revocation while polling, failed API responses and reconnect without sample substitutions.
 7. Set the public domain, TLS and WEBSITE_ORIGINS; verify all four direct SPA routes through Nginx and the deployed artifact CSP.
 
-Generated `contracts/openapi.json` and ten fixture files describe frontend consumption, not proof of server compatibility. See `VALIDATION.md` for observed checks. At the referenced checkout the server implementation was not present; real account, cloud and extension acceptance remains pending.
+Generated `contracts/openapi.json` and ten fixture files describe frontend consumption, not proof of server compatibility. See `VALIDATION.md` for observed checks. The recording audit inspected `ext/mvp` at `361d413f1fe18dd5463db7aeab419c41e0f3637b`; its server/cloud implementation is absent from fetched main `bda3a7043921026e0135a645cd5f8b42efc1ce6c`. Both recording devices need a build containing the cloud module. Real account, provider and two-device acceptance remains pending; the user reports that linking is unfinished. Follow [DEMO-RECORDING.md](DEMO-RECORDING.md).

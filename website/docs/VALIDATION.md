@@ -1,6 +1,6 @@
 # Validation — November 7, 2026
 
-Local frontend evidence, not production or backend acceptance.
+Frontend checks plus a bounded public-site and extension-source audit. This is not full production or cross-device acceptance.
 
 ## Automated checks
 
@@ -30,8 +30,22 @@ No physical iPhone, Android or iPad, Safari/WebKit session, screen-reader audit 
 
 ## Integration boundaries
 
-At the referenced main checkout only the API documents were present. Real registration/login, two-account invitation/message flows, real extension ingestion and provider calls have not been verified. Automated API tests use controlled responses.
+The initial frontend checkout contained API documents without the server implementation. The recording audit subsequently inspected `ext/mvp` at `361d413f1fe18dd5463db7aeab419c41e0f3637b`, which includes server and cross-device code. Fetched main `bda3a7043921026e0135a645cd5f8b42efc1ce6c` does not yet contain that cloud implementation.
 
-Oracle deployment, TLS, Nginx syntax on the target VM, deployed CSP and production CORS remain unverified; no public domain was supplied. GitHub Actions is a template, not an observed CI run.
+Real registration/login, two-account invitation/message flows, real extension ingestion and provider calls have not been verified. Automated API tests use controlled responses. The user reports that the two recording devices are not yet linked.
+
+## Recording audit
+
+- Re-ran strict type checking, all 29 frontend tests, generated-contract consistency, formatting and the production build. All passed.
+- Fixed Vite's API target: the earlier local port 8000 was unavailable. Development and production preview now proxy to the extension's deployed default, `https://cuemesh.looptw.com`, with `CUEMESH_API_TARGET` as a local-server override.
+- Matched the registration display-name limit to the actual server: 80 characters in both the input and request schema. Regenerated OpenAPI.
+- Public HTTPS root returned 200. `/workspace` rendered the live sign-in screen with no captured console errors. The deployed commit and full authenticated flows were not established.
+- Public `GET /api/me` without authorization returned the expected JSON 401. A preflight for `http://127.0.0.1:4180`, GET and the authorization header returned 204 with that exact allowed origin. Local Vite `/api/me` returned the same real JSON 401 after the proxy fix.
+- The built local preview rendered the compact workspace with no captured console errors.
+- In an isolated copy of `ext/mvp`, `node --test --test-concurrency=1 --test-reporter=spec 'test/browser/*.test.js' 'test/core/*.test.js' 'test/cloud/*.test.js' 'test/ui/*.test.js'` passed **236 tests in 20 suites**. These cover simulated council/routing, browser approvals/protected fields, remote consent, question/report behavior and UI logic. Providers, browser actions and network flows are controlled test doubles.
+- Provider-SDK tests and the extension build were not run: dependency preparation stopped with a pnpm resolution-policy error. The PostgreSQL server suite was not run; no production database was reset or populated for testing.
+- Source review shows that rejecting a browser action returns a denial to the model; it does not necessarily cancel the whole run. The recording narration has been corrected accordingly.
+
+Actual VM configuration, Nginx syntax, deployed artifact CSP, physical devices, real model calls and the complete A → B → A flow remain unverified. GitHub Actions is a template, not an observed CI run. Follow [DEMO-RECORDING.md](DEMO-RECORDING.md) before recording the collaboration scene.
 
 Development origin was delivered to Harry in [issue #1](https://github.com/Harry1667/CueMesh/issues/1). The backend integration checklist is in BACKEND_HANDOFF.md.

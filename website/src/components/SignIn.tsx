@@ -60,7 +60,7 @@ export function SignIn({ onSignedIn }: { onSignedIn?: () => void }) {
         {creating ? (
           <label>
             {t('Display name')}
-            <input name="displayName" autoComplete="name" required maxLength={100} />
+            <input name="displayName" autoComplete="name" required maxLength={80} />
           </label>
         ) : null}
         <label>
