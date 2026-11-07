@@ -1,0 +1,18 @@
+# 系統檔
+.DS_Store
+
+# 相依套件與建置產物
+node_modules/
+dist/
+build/
+
+# 機密與金鑰（不可進版控）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crx
+
+# 記錄檔
+*.log
