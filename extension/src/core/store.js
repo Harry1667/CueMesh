@@ -35,6 +35,12 @@ export async function createStore({ kv = chromeKv(), onError = (err) => console.
     settings: { ...DEFAULT_SETTINGS, ...(saved.settings ?? {}) },
   };
   let keys = (await kv.get(KEYS_KEY)) ?? {};
+  // 已移除的 AI 服務（例如 Gemini）不該留著使用者的 key
+  const supportedKeys = Object.fromEntries(Object.entries(keys).filter(([id]) => PROVIDERS.some((p) => p.id === id)));
+  if (Object.keys(supportedKeys).length !== Object.keys(keys).length) {
+    keys = supportedKeys;
+    await kv.set(KEYS_KEY, keys);
+  }
 
   // 瀏覽器重開或面板關閉後，執行中的工作不可能續跑，要明確標記為中斷
   for (const run of state.runs) {

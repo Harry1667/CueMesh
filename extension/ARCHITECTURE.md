@@ -10,7 +10,7 @@ Chrome MV3 擴充功能，**不依賴任何後端**。agent 迴圈跑在側邊�
 側邊面板 UI (src/ui)
    │ createEngine()
 核心 (src/core)：規劃 → 路由 → 平行執行 → @ 委派 → 整合
-   ├─ 供應商 (src/providers)：Anthropic / OpenAI / Gemini 統一介面
+   ├─ 供應商 (src/providers)：Anthropic / OpenAI 統一介面
    └─ 瀏覽器 (src/browser)：透過 chrome API 操作分頁，頁面內邏輯在 src/content
 ```
 
@@ -21,7 +21,7 @@ Chrome MV3 擴充功能，**不依賴任何後端**。agent 迴圈跑在側邊�
 | 目錄 | 負責人 |
 |---|---|
 | `src/core/`、`test/core/`、`build.mjs`、`public/manifest.json`、`src/background.js`、`README.md`、`ARCHITECTURE.md` | 整合者 Claude（主控視窗） |
-| `src/providers/openai.js`、`src/providers/gemini.js`、`src/providers/index.js`、`test/providers/` | Codex B |
+| `src/providers/openai.js`、`src/providers/index.js`、`test/providers/` | Codex B |
 | `src/browser/`、`src/content/`、`test/browser/` | Codex A |
 | `src/ui/`、`test/ui/` | Claude UI |
 
@@ -36,7 +36,7 @@ Chrome MV3 擴充功能，**不依賴任何後端**。agent 迴圈跑在側邊�
 ## 介面一：供應商（`src/providers/types.js` 已定義）
 
 ```js
-provider.name // 'anthropic' | 'openai' | 'gemini'
+provider.name // 'anthropic' | 'openai'
 await provider.turn({ apiKey, model, system, messages, tools, webSearch, maxTokens, effort, signal })
 // → { text, toolCalls: [{ id, name, args }], usage: { input, output }, sources: [{ title, url }], raw }
 ```
@@ -50,7 +50,7 @@ await provider.turn({ apiKey, model, system, messages, tools, webSearch, maxToke
   - `{ role: 'assistant', text, toolCalls, raw }`：`raw` 是上一次 `turn` 回傳的原始內容，**必須原樣送回**（推理項目、thought signature 都在裡面）。
   - `{ role: 'tool', results: [{ id, name, text, image?: { mediaType, data }, isError? }] }`
 - 參考範本：`src/providers/anthropic.js`。SDK 都要在瀏覽器環境可用（OpenAI 需 `dangerouslyAllowBrowser: true`），並可傳 `baseURL` 給測試用假伺服器。
-- `src/providers/index.js` 匯出 `createProviders({ baseURLs } = {})`，回傳 `{ anthropic, openai, gemini }`。
+- `src/providers/index.js` 匯出 `createProviders({ baseURLs } = {})`，回傳 `{ anthropic, openai }`。
 
 ## 介面二：瀏覽器（`src/browser/index.js`）
 
@@ -103,7 +103,7 @@ await engine.getRun(runId);                    // Run，含 tasks、artifacts、
 ```js
 await store.listProjects(); await store.createProject({ name, description }); await store.deleteProject(id);
 await store.listRuns(projectId);
-await store.getKeyStatus();                    // { anthropic: { set, last4 }, openai, gemini }
+await store.getKeyStatus();                    // { anthropic: { set, last4 }, openai }
 await store.setKey(provider, apiKey); await store.removeKey(provider);
 await store.getSettings(); await store.updateSettings(patch);
 // settings：{ approvalMode: 'always' | 'risky', maxCostUsd, teamPrefs: { [agent]: 'provider/model' } }

@@ -33,7 +33,7 @@ export function estimateCost(model, inputTokens, outputTokens) {
   return (inputTokens * model.inputPer1M + outputTokens * model.outputPer1M) / 1_000_000;
 }
 
-const PROVIDER_ALIASES = { openai: 'openai', anthropic: 'anthropic', claude: 'anthropic', gemini: 'gemini', google: 'gemini' };
+const PROVIDER_ALIASES = { openai: 'openai', anthropic: 'anthropic', claude: 'anthropic' };
 const AGENT_MENTIONS = new Set(['research', 'coding', '3d', 'vision', 'review', 'browser', 'planning']);
 
 // 解析使用者打的 @mention：@research 指定 agent，@claude 指定供應商，@auto 交給規劃器

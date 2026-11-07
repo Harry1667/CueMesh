@@ -22,11 +22,11 @@ function fakeProvider(name, script) {
   };
 }
 
-async function setup({ anthropic = [], openai = [], gemini = [], keys = ['anthropic', 'openai', 'gemini'], browser } = {}) {
+async function setup({ anthropic = [], openai = [], keys = ['anthropic', 'openai'], browser } = {}) {
   const store = await createStore({ kv: memoryKv() });
   for (const k of keys) await store.setKey(k, `key-${k}-1234`);
   const project = await store.createProject({ name: '測試' });
-  const providers = { anthropic: fakeProvider('anthropic', anthropic), openai: fakeProvider('openai', openai), gemini: fakeProvider('gemini', gemini) };
+  const providers = { anthropic: fakeProvider('anthropic', anthropic), openai: fakeProvider('openai', openai) };
   const engine = createEngine({ store, providers, browser });
   const events = [];
   engine.subscribe((e) => events.push(e));
@@ -61,12 +61,12 @@ test('多任務依賴圖：前置成果會傳給後續任務，最後整合', as
       text('程式完成'),
       text('整合結果'),
     ],
-    gemini: [text('價格是 100 元')],
+    openai: [text('價格是 100 元')],
   });
   const { run } = await t.run('比較價格並做成網頁');
   assert.equal(run.status, 'done');
   assert.equal(run.finalResult, '整合結果');
-  assert.equal(run.tasks[0].provider, 'gemini');
+  assert.equal(run.tasks[0].provider, 'openai');
   const codingCall = t.providers.anthropic.calls[1];
   assert.match(codingCall.messages[0].content[0].text, /價格是 100 元/);
   assert.match(codingCall.messages[0].content[0].text, /untrusted_content/);
@@ -75,21 +75,20 @@ test('多任務依賴圖：前置成果會傳給後續任務，最後整合', as
 test('模型失敗時改用備援，並留下事件與統計', async () => {
   const t = await setup({
     anthropic: [new ProviderError('auth', 'anthropic：API key 無效', { provider: 'anthropic' })],
-    openai: [],
-    gemini: [text('Gemini 接手完成')],
+    openai: [text('OpenAI 接手完成')],
   });
   const { run } = await t.run('@coding 寫程式');
   assert.equal(run.status, 'done');
-  assert.equal(run.tasks[0].provider, 'gemini');
+  assert.equal(run.tasks[0].provider, 'openai');
   assert.ok(t.events.some((e) => e.type === 'fallback' && e.payload.reason.includes('API key 無效')));
   const stats = await t.store.getStats();
   assert.equal(stats.find((s) => s.provider === 'anthropic' && s.agentType === 'coding').failures, 1);
 });
 
 test('只有部分 API key 時，路由只會選有 key 的供應商', async () => {
-  const t = await setup({ keys: ['gemini'], gemini: [text('完成')] });
-  const { run } = await t.run('@review 看一下');
-  assert.equal(run.tasks[0].provider, 'gemini');
+  const t = await setup({ keys: ['openai'], openai: [text('完成')] });
+  const { run } = await t.run('@coding 看一下');
+  assert.equal(run.tasks[0].provider, 'openai');
 });
 
 test('沒有 API key 時明確失敗', async () => {
@@ -100,7 +99,7 @@ test('沒有 API key 時明確失敗', async () => {
 });
 
 test('@ 指定沒有 key 的供應商時明確失敗，不偷偷換別家', async () => {
-  const t = await setup({ keys: ['gemini'] });
+  const t = await setup({ keys: ['openai'] });
   const { run } = await t.run('@claude 幫我想');
   assert.equal(run.status, 'failed');
   assert.match(run.error, /anthropic/);
@@ -109,7 +108,7 @@ test('@ 指定沒有 key 的供應商時明確失敗，不偷偷換別家', asyn
 test('前置任務失敗時，依賴它的任務被略過，結果標記部分完成', async () => {
   const fail = () => new ProviderError('server', '壞了', { provider: 'x' });
   const t = await setup({
-    keys: ['anthropic', 'gemini'],
+    keys: ['anthropic', 'openai'],
     anthropic: (params) => {
       if (params.system.includes('任務規劃器')) {
         return plan([
@@ -122,7 +121,7 @@ test('前置任務失敗時，依賴它的任務被略過，結果標記部分�
       if (params.system.includes('整合')) return text('整合');
       return text('完成');
     },
-    gemini: () => fail(),
+    openai: () => fail(),
   });
   const { run } = await t.run('多件事');
   assert.equal(run.status, 'partial');
@@ -133,7 +132,7 @@ test('前置任務失敗時，依賴它的任務被略過，結果標記部分�
 test('agent 可以 @ 委派其他 agent，並把回覆當資料帶回來', async () => {
   const t = await setup({
     anthropic: [call('delegate', { agent: 'research', request: '查最新版本號' }, 'd1'), text('依據查到的版本完成')],
-    gemini: [text('版本是 9.9')],
+    openai: [text('版本是 9.9')],
   });
   const { run } = await t.run('@coding 用最新版寫');
   assert.equal(run.status, 'done');
@@ -263,7 +262,7 @@ test('規劃器回傳壞 JSON 時改用備援計畫，不會整個失敗', async
 });
 
 test('團隊設定：指定的模型優先', async () => {
-  const t = await setup({ anthropic: [], gemini: [], openai: [text('OpenAI 寫的')] });
+  const t = await setup({ anthropic: [], openai: [text('OpenAI 寫的')] });
   await t.store.updateSettings({ teamPrefs: { coding: 'openai/gpt-6.1-terra' } });
   const { run } = await t.run('@coding 寫');
   assert.equal(run.tasks[0].model, 'gpt-6.1-terra');
@@ -272,13 +271,13 @@ test('團隊設定：指定的模型優先', async () => {
 test('截圖不寫進持久化儲存，但會傳給支援讀圖的模型', async () => {
   const kv = memoryKv();
   const store = await createStore({ kv });
-  await store.setKey('gemini', 'k');
+  await store.setKey('openai', 'k');
   const project = await store.createProject({ name: 'p' });
-  const gemini = fakeProvider('gemini', [text('看到圖了')]);
-  const engine = createEngine({ store, providers: { gemini } });
+  const openai = fakeProvider('openai', [text('看到圖了')]);
+  const engine = createEngine({ store, providers: { openai } });
   const runId = engine.start({ projectId: project.id, goal: '@vision 看圖', context: [{ type: 'region', image: { mediaType: 'image/png', data: 'AAAA' } }] });
   await engine.waitForRun(runId);
-  assert.equal(gemini.calls[0].messages[0].content[1].data, 'AAAA');
+  assert.equal(openai.calls[0].messages[0].content[1].data, 'AAAA');
   assert.ok(!JSON.stringify(kv.data['cuemesh.state.v1']).includes('AAAA'));
 });
 
@@ -446,12 +445,19 @@ test('裝置清單取得失敗時不影響本機任務；沒有 mesh 時規劃�
 
 test('帳戶沒有餘額（402）時不再試同一家的其他模型，直接換下一家', async () => {
   const t = await setup({
-    keys: ['gemini', 'openai'],
-    gemini: () => new ProviderError('billing', 'gemini：帳戶餘額不足', { provider: 'gemini', status: 402 }),
+    keys: ['anthropic', 'openai'],
+    anthropic: () => new ProviderError('billing', 'anthropic：帳戶餘額不足', { provider: 'anthropic', status: 402 }),
     openai: [text('OpenAI 接手')],
   });
-  const { run } = await t.run('@research 查資料');
+  const { run } = await t.run('@coding 寫程式');
   assert.equal(run.status, 'done');
   assert.equal(run.tasks[0].provider, 'openai');
-  assert.equal(t.providers.gemini.calls.length, 1);
+  assert.equal(t.providers.anthropic.calls.length, 1);
+});
+
+test('載入時清掉已移除 AI 服務的舊 key，其他 key 保留', async () => {
+  const kv = memoryKv({ 'cuemesh.keys.v1': { gemini: 'old-gemini-key', openai: 'keep-me' } });
+  const store = await createStore({ kv });
+  assert.deepEqual(store.keys.listProviders(), ['openai']);
+  assert.deepEqual(kv.data['cuemesh.keys.v1'], { openai: 'keep-me' });
 });

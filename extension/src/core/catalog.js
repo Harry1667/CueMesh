@@ -1,30 +1,27 @@
 // 模型目錄、agent 定義與預設路由。依據見 docs/model-comparison.md（查核日期 2026-11-07）。
-// 價格為 USD／每百萬 tokens；Gemini 的已公告調價尚未生效，到期要更新。
+// 價格為 USD／每百萬 tokens。
 
 export const MODELS = [
   { provider: 'anthropic', id: 'claude-opus-5-5', label: 'Claude Opus 5.5', inputPer1M: 4, outputPer1M: 20, vision: true },
   { provider: 'anthropic', id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5', inputPer1M: 2, outputPer1M: 10, vision: true },
   { provider: 'openai', id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', inputPer1M: 2, outputPer1M: 10, vision: true },
   { provider: 'openai', id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra', inputPer1M: 1, outputPer1M: 5, vision: true },
-  { provider: 'gemini', id: 'gemini-4-argon', label: 'Gemini 4 Argon', inputPer1M: 2, outputPer1M: 10, vision: true },
-  { provider: 'gemini', id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', inputPer1M: 0.75, outputPer1M: 3.75, vision: true },
 ];
 
 export const PROVIDERS = [
   { id: 'anthropic', label: 'Anthropic Claude' },
   { id: 'openai', label: 'OpenAI' },
-  { id: 'gemini', label: 'Google Gemini' },
 ];
 
 // 第一個是預設，其後是備援順序
 export const ROUTES = {
-  research: ['gemini/gemini-3.8-flash', 'gemini/gemini-4-argon', 'openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5'],
-  coding: ['anthropic/claude-opus-5-5', 'anthropic/claude-sonnet-5-5', 'gemini/gemini-4-argon', 'openai/gpt-6.1-sol'],
-  '3d': ['gemini/gemini-4-argon', 'anthropic/claude-opus-5-5', 'openai/gpt-6.1-sol'],
-  vision: ['gemini/gemini-3.8-flash', 'gemini/gemini-4-argon', 'openai/gpt-6.1-terra', 'anthropic/claude-opus-5-5'],
-  planning: ['anthropic/claude-opus-5-5', 'openai/gpt-6.1-sol', 'gemini/gemini-4-argon'],
-  review: ['openai/gpt-6.1-sol', 'anthropic/claude-opus-5-5', 'gemini/gemini-3.8-flash'],
-  browser: ['anthropic/claude-opus-5-5', 'anthropic/claude-sonnet-5-5', 'openai/gpt-6.1-terra', 'gemini/gemini-3.8-flash'],
+  research: ['openai/gpt-6.1-sol', 'anthropic/claude-sonnet-5-5'],
+  coding: ['anthropic/claude-opus-5-5', 'anthropic/claude-sonnet-5-5', 'openai/gpt-6.1-sol'],
+  '3d': ['anthropic/claude-opus-5-5', 'openai/gpt-6.1-sol'],
+  vision: ['openai/gpt-6.1-terra', 'anthropic/claude-opus-5-5'],
+  planning: ['anthropic/claude-opus-5-5', 'openai/gpt-6.1-sol'],
+  review: ['openai/gpt-6.1-sol', 'anthropic/claude-opus-5-5'],
+  browser: ['anthropic/claude-opus-5-5', 'anthropic/claude-sonnet-5-5', 'openai/gpt-6.1-terra'],
 };
 
 export function parseModelRef(ref) {

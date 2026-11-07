@@ -109,9 +109,3 @@ export function openAITextResponse(text) {
   ]);
 }
 
-export function geminiTextResponse(text) {
-  return {
-    candidates: [{ content: { role: 'model', parts: [{ text }] }, finishReason: 'STOP' }],
-    usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 2 },
-  };
-}
