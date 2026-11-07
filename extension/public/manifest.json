@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "CueMesh",
+  "version": "0.1.0",
+  "description": "能操作瀏覽器、可接多家 AI 組成 agent 團隊的擴充功能。",
+  "minimum_chrome_version": "120",
+  "action": { "default_title": "開啟 CueMesh" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "permissions": ["sidePanel", "scripting", "tabs", "storage", "unlimitedStorage", "contextMenus"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; frame-src 'self'"
+  },
+  "web_accessible_resources": []
+}
