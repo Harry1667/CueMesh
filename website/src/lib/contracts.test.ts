@@ -22,6 +22,13 @@ const client = (request: typeof fetch, unauthorized = () => {}) =>
     () => 'zh-TW',
   );
 describe('cloud v1 data boundaries', () => {
+  it('calls transport without binding it to the client, as the browser fetch requires', async () => {
+    const transport = function (this: unknown) {
+      if (this !== undefined) throw new TypeError('Illegal invocation');
+      return Promise.resolve(json({ projects: [] }));
+    } as unknown as typeof fetch;
+    await expect(client(transport).projects()).resolves.toEqual({ projects: [] });
+  });
   it('sorts and deduplicates events without changing partial status', () => {
     const value = getDemoDetail('demo-run-2');
     value.events = [value.events[2], value.events[0], value.events[2]];

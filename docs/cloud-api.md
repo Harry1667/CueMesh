@@ -19,6 +19,7 @@
 | `POST /api/auth/login` | `{ email, password }` | `{ token, user }` |
 | `POST /api/auth/logout` | 無 | 204 |
 | `GET /api/me` | 無 | `{ user }` |
+| `GET /api/health` 或 `GET /api/` | 不需登入 | `{ service, version, status }`，用於確認服務與資料庫正常 |
 
 `user`：`{ id, email, displayName, createdAt }`。密碼至少 10 字元。登入失敗一律回同一個錯誤，不透露 email 是否存在。登入與註冊要限流。
 

@@ -1,0 +1,536 @@
+import { after, afterEach, before, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import EmbeddedPostgres from 'embedded-postgres';
+import { createApp } from '../src/app.js';
+import { createDatabase } from '../src/database.js';
+
+// 測試跑在真正的 PostgreSQL。有 TEST_DATABASE_URL 就用它，否則在本機啟動一個暫時的。
+let embedded = null;
+let embeddedDir = null;
+let connectionString = process.env.TEST_DATABASE_URL;
+const activeContexts = new Set();
+
+before(async () => {
+  if (connectionString) return;
+  embeddedDir = await mkdtemp(join(tmpdir(), 'cuemesh-pg-'));
+  const port = 54000 + Math.floor(Math.random() * 1000);
+  embedded = new EmbeddedPostgres({
+    databaseDir: embeddedDir, user: 'postgres', password: 'test-only', port, persistent: false,
+    onLog: () => {}, onError: () => {},
+  });
+  await embedded.initialise();
+  await embedded.start();
+  await embedded.createDatabase('cuemesh_test');
+  connectionString = `postgres://postgres:test-only@127.0.0.1:${port}/cuemesh_test`;
+}, { timeout: 60_000 });
+
+after(async () => {
+  await embedded?.stop();
+  if (embeddedDir) await rm(embeddedDir, { recursive: true, force: true });
+});
+
+afterEach(async () => {
+  for (const context of activeContexts) await close(context);
+  activeContexts.clear();
+});
+
+async function start(options = {}) {
+  const database = createDatabase({ connectionString });
+  let clock = options.now ?? 1_750_000_000_000;
+  const app = await createApp({
+    database,
+    now: () => clock,
+    websiteOrigins: options.websiteOrigins,
+    rateLimits: options.rateLimits,
+  });
+  await database.resetForTests();
+  const server = createServer(app);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  const context = {
+    app,
+    database,
+    server,
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    advance(milliseconds) { clock += milliseconds; },
+  };
+  activeContexts.add(context);
+  return context;
+}
+
+async function close(context) {
+  await context.app.locals.close();
+  if (context.server.listening) {
+    context.server.closeAllConnections?.();
+    await new Promise((resolve) => context.server.close(resolve));
+  }
+  await context.database.close();
+}
+
+async function api(context, path, { method = 'GET', token, body, headers = {} } = {}) {
+  const requestHeaders = { ...headers };
+  if (token) requestHeaders.Authorization = `Bearer ${token}`;
+  if (body !== undefined) requestHeaders['Content-Type'] = 'application/json';
+  const response = await fetch(`${context.baseUrl}${path}`, {
+    method,
+    headers: requestHeaders,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  let json = null;
+  if (text) {
+    try { json = JSON.parse(text); } catch { json = text; }
+  }
+  return { response, status: response.status, body: json, text };
+}
+
+async function register(context, email, displayName) {
+  const result = await api(context, '/api/auth/register', {
+    method: 'POST', body: { email, password: 'correct horse battery', displayName },
+  });
+  assert.equal(result.status, 201, result.text);
+  return { ...result.body, password: 'correct horse battery' };
+}
+
+async function putDevice(context, account, id, acceptRemote = undefined) {
+  const result = await api(context, `/api/devices/${id}`, {
+    method: 'PUT', token: account.token, body: { name: id, platform: 'test' },
+  });
+  assert.equal(result.status, 200, result.text);
+  if (acceptRemote) {
+    const patched = await api(context, `/api/devices/${id}`, {
+      method: 'PATCH', token: account.token, body: { acceptRemote },
+    });
+    assert.equal(patched.status, 200, patched.text);
+  }
+  return result.body.device;
+}
+
+async function createProject(context, account, id = 'project-a') {
+  const result = await api(context, `/api/projects/${id}`, {
+    method: 'PUT', token: account.token, body: { name: '測試專案', description: '共享測試' },
+  });
+  assert.equal(result.status, 200, result.text);
+  return result.body.project;
+}
+
+async function addMember(context, owner, member, projectId) {
+  const invite = await api(context, `/api/projects/${projectId}/invites`, { method: 'POST', token: owner.token, body: {} });
+  assert.equal(invite.status, 201, invite.text);
+  const accepted = await api(context, '/api/invites/accept', { method: 'POST', token: member.token, body: { code: invite.body.code } });
+  assert.equal(accepted.status, 200, accepted.text);
+}
+
+async function createRun(context, account, { id, projectId, deviceId, status = 'running' }) {
+  const result = await api(context, `/api/runs/${id}`, {
+    method: 'PUT', token: account.token,
+    body: {
+      id, projectId, deviceId, goal: '測試任務', status, mode: 'auto', planSummary: '', tasks: [],
+      createdAt: 1_750_000_000_000,
+    },
+  });
+  assert.equal(result.status, 200, result.text);
+  return result.body.run;
+}
+
+async function createDispatch(context, sender, body) {
+  return api(context, '/api/dispatches', { method: 'POST', token: sender.token, body });
+}
+
+async function sharedFixture(context) {
+  const alice = await register(context, 'alice@example.test', 'Alice');
+  const bob = await register(context, 'bob@example.test', 'Bob');
+  const carol = await register(context, 'carol@example.test', 'Carol');
+  await putDevice(context, alice, 'alice-device');
+  await putDevice(context, bob, 'bob-device');
+  await putDevice(context, carol, 'carol-device');
+  const project = await createProject(context, alice);
+  await addMember(context, alice, bob, project.id);
+  return { alice, bob, carol, project };
+}
+
+function dispatchBody(id, projectId, targetDeviceId, extras = {}) {
+  return {
+    id,
+    projectId,
+    targetDeviceId,
+    senderDeviceId: 'alice-device',
+    goal: '請研究這個功能',
+    context: [{ type: 'selection', text: '測試', url: 'https://example.test', title: '測試' }],
+    options: { maxCostUsd: 1 },
+    parent: { runId: 'parent-run', taskId: 'task-1' },
+    ...extras,
+  };
+}
+
+function parseFrames(text) {
+  return text.split('\n\n').filter(Boolean).map((frame) => {
+    const data = frame.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('\n');
+    return data ? JSON.parse(data) : null;
+  }).filter(Boolean);
+}
+
+async function readSseUntil(reader, predicate, timeoutMs = 2_000) {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const left = Math.max(1, deadline - Date.now());
+    const next = await Promise.race([
+      reader.read(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('等待 SSE 事件逾時')), left)),
+    ]);
+    if (next.done) throw new Error('SSE 在收到預期事件前關閉');
+    buffer += decoder.decode(next.value, { stream: true });
+    const parts = buffer.split('\n\n');
+    buffer = parts.pop();
+    for (const event of parseFrames(parts.join('\n\n'))) {
+      if (predicate(event)) return event;
+    }
+  }
+  throw new Error('等待 SSE 事件逾時');
+}
+
+test('任務列表包含最終結果與錯誤欄位，供網站顯示', async () => {
+  const context = await start();
+  const alice = await register(context, 'alice@example.test', 'Alice');
+  const project = await createProject(context, alice);
+  const body = { projectId: project.id, goal: '目標', status: 'done', mode: 'auto', finalResult: '完成', createdAt: 1, tasks: [] };
+  assert.equal((await api(context, '/api/runs/run-list', { method: 'PUT', token: alice.token, body })).status, 200);
+  const { runs } = (await api(context, `/api/projects/${project.id}/runs`, { token: alice.token })).body;
+  assert.equal(runs[0].finalResult, '完成');
+  assert.equal(runs[0].error, null);
+});
+
+test('API 入口與健康檢查不需登入，且不帶帳號資料', async () => {
+  const context = await start();
+  for (const path of ['/api', '/api/', '/api/health']) {
+    const result = await api(context, path);
+    assert.equal(result.status, 200);
+    assert.deepEqual(result.body, { service: 'CueMesh API', version: 'v1', status: 'ok' });
+  }
+  assert.equal((await api(context, '/api/does-not-exist')).status, 404);
+});
+
+test('帳號驗證只儲存雜湊，登入失敗不洩漏 Email 是否存在', async () => {
+  const context = await start({ rateLimits: { authMax: 10 } });
+  const alice = await register(context, 'alice@example.test', 'Alice');
+  const stored = await context.database.one('SELECT password_hash FROM users WHERE id = $1', [alice.user.id]);
+  const token = await context.database.one('SELECT token_hash FROM auth_tokens WHERE user_id = $1', [alice.user.id]);
+  assert.ok(!stored.password_hash.includes(alice.password));
+  assert.notEqual(token.token_hash, alice.token);
+
+  const unknown = await api(context, '/api/auth/login', { method: 'POST', body: { email: 'none@example.test', password: 'wrong password' } });
+  const wrong = await api(context, '/api/auth/login', { method: 'POST', body: { email: 'alice@example.test', password: 'wrong password' } });
+  assert.equal(unknown.status, 401);
+  assert.deepEqual(unknown.body, wrong.body);
+  const logout = await api(context, '/api/auth/logout', { method: 'POST', token: alice.token });
+  assert.equal(logout.status, 204);
+  assert.equal((await api(context, '/api/me', { token: alice.token })).status, 401);
+});
+
+test('跨帳號資源一律不可讀寫且 404 不洩漏存在性', async () => {
+  const context = await start();
+  const { alice, bob, carol, project } = await sharedFixture(context);
+  await createRun(context, alice, { id: 'run-a', projectId: project.id, deviceId: 'alice-device' });
+
+  const known = await api(context, '/api/runs/run-a', { token: carol.token });
+  const missing = await api(context, '/api/runs/missing-run', { token: carol.token });
+  assert.equal(known.status, 404);
+  assert.deepEqual(known.body, missing.body);
+  assert.equal((await api(context, `/api/projects/${project.id}/members`, { token: carol.token })).status, 404);
+  assert.equal((await api(context, '/api/devices/alice-device', { method: 'PATCH', token: carol.token, body: { name: '偷走' } })).status, 404);
+  assert.equal((await api(context, '/api/runs/run-a', {
+    method: 'PUT', token: carol.token,
+    body: { projectId: project.id, goal: '竄改', status: 'done', mode: 'auto', planSummary: '', tasks: [] },
+  })).status, 404);
+  assert.equal((await api(context, '/api/projects', { token: bob.token })).status, 200);
+});
+
+test('非成員不能派工到其他帳號裝置，伺服器忽略偽造 sender 欄位', async () => {
+  const context = await start();
+  const { alice, bob, carol, project } = await sharedFixture(context);
+  const forbiddenDispatch = await createDispatch(context, carol, dispatchBody('bad-dispatch', project.id, 'bob-device', { senderDeviceId: 'carol-device' }));
+  assert.equal(forbiddenDispatch.status, 404);
+
+  const created = await createDispatch(context, alice, dispatchBody('dispatch-a', project.id, 'bob-device', {
+    senderName: '假名字', senderUserId: carol.user.id, targetUserId: carol.user.id, crossAccount: false,
+  }));
+  assert.equal(created.status, 201, created.text);
+  assert.equal(created.body.dispatch.senderName, 'Alice');
+  assert.equal(created.body.dispatch.senderUserId, alice.user.id);
+  assert.equal(created.body.dispatch.targetUserId, bob.user.id);
+  assert.equal(created.body.dispatch.crossAccount, true);
+});
+
+test('派工狀態機拒絕非法轉換，目標裝置可完成合法流程', async () => {
+  const context = await start();
+  const { alice, bob, project } = await sharedFixture(context);
+  const created = await createDispatch(context, alice, dispatchBody('dispatch-state', project.id, 'bob-device'));
+  assert.equal(created.status, 201);
+  assert.equal((await api(context, '/api/dispatches/dispatch-state/accept', { method: 'POST', token: alice.token, body: { runId: 'run-b' } })).status, 404);
+  assert.equal((await api(context, '/api/dispatches/dispatch-state/report', { method: 'POST', token: bob.token, body: { status: 'done', runId: 'run-b', summary: 'x', result: 'x' } })).status, 409);
+  const accepted = await api(context, '/api/dispatches/dispatch-state/accept', { method: 'POST', token: bob.token, body: { runId: 'run-b' } });
+  assert.equal(accepted.status, 200);
+  await createRun(context, bob, { id: 'run-b', projectId: project.id, deviceId: 'bob-device' });
+  const reported = await api(context, '/api/dispatches/dispatch-state/report', {
+    method: 'POST', token: bob.token, body: { status: 'done', runId: 'run-b', summary: '完成', result: '結果', sources: [] },
+  });
+  assert.equal(reported.status, 200);
+  assert.equal(reported.body.dispatch.status, 'done');
+  const cancelled = await api(context, '/api/dispatches/dispatch-state/cancel', { method: 'POST', token: alice.token, body: {} });
+  assert.equal(cancelled.status, 409);
+});
+
+test('移除成員立即撤銷存取並取消 pending 與 accepted 派工', async () => {
+  const context = await start();
+  const { alice, bob, project } = await sharedFixture(context);
+  assert.equal((await createDispatch(context, alice, dispatchBody('dispatch-pending', project.id, 'bob-device'))).status, 201);
+  assert.equal((await createDispatch(context, alice, dispatchBody('dispatch-accepted', project.id, 'bob-device'))).status, 201);
+  assert.equal((await api(context, '/api/dispatches/dispatch-accepted/accept', { method: 'POST', token: bob.token, body: { runId: 'run-b' } })).status, 200);
+
+  const removed = await api(context, `/api/projects/${project.id}/members/${bob.user.id}`, { method: 'DELETE', token: alice.token });
+  assert.equal(removed.status, 204);
+  assert.equal((await api(context, '/api/dispatches/dispatch-pending', { token: bob.token })).status, 404);
+  assert.equal((await api(context, '/api/dispatches/dispatch-accepted/report', {
+    method: 'POST', token: bob.token, body: { status: 'failed', runId: 'run-b', summary: 'x', result: 'x' },
+  })).status, 404);
+  const pending = await api(context, '/api/dispatches/dispatch-pending', { token: alice.token });
+  const accepted = await api(context, '/api/dispatches/dispatch-accepted', { token: alice.token });
+  assert.equal(pending.body.dispatch.status, 'cancelled');
+  assert.equal(accepted.body.dispatch.status, 'cancelled');
+});
+
+test('保險箱版本衝突、Run 事件去重與敏感欄位拒絕', async () => {
+  const context = await start();
+  const alice = await register(context, 'alice@example.test', 'Alice');
+  const vault = {
+    expectedVersion: 0,
+    kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: 600000 },
+    salt: 'YQ==', iv: 'Yg==', ciphertext: 'Yw==',
+  };
+  assert.equal((await api(context, '/api/vault', { method: 'PUT', token: alice.token, body: vault })).status, 200);
+  const conflict = await api(context, '/api/vault', { method: 'PUT', token: alice.token, body: { ...vault, ciphertext: 'ZA==' } });
+  assert.equal(conflict.status, 409);
+
+  await putDevice(context, alice, 'alice-device');
+  const project = await createProject(context, alice);
+  await createRun(context, alice, { id: 'run-events', projectId: project.id, deviceId: 'alice-device' });
+  const event = { seq: 1, runId: 'run-events', type: 'tool_call', payload: { tool: 'x', args: { query: 'private' } }, createdAt: 1 };
+  assert.equal((await api(context, '/api/runs/run-events/events', { method: 'POST', token: alice.token, body: { events: [event] } })).body.accepted, 1);
+  assert.equal((await api(context, '/api/runs/run-events/events', { method: 'POST', token: alice.token, body: { events: [{ ...event, payload: { changed: true } }] } })).body.accepted, 0);
+  const full = await api(context, '/api/runs/run-events', { token: alice.token });
+  assert.equal(full.body.run.events.length, 1);
+  const sensitive = await api(context, '/api/runs/run-events', {
+    method: 'PUT', token: alice.token,
+    body: { projectId: project.id, deviceId: 'alice-device', goal: 'x', status: 'running', mode: 'auto', planSummary: '', tasks: [], apiKey: 'nope' },
+  });
+  assert.equal(sensitive.status, 400);
+});
+
+test('pending 派工到期後不能接受，payload 上限回契約錯誤', async () => {
+  const context = await start();
+  const { alice, bob, project } = await sharedFixture(context);
+  const created = await createDispatch(context, alice, dispatchBody('dispatch-expire', project.id, 'bob-device'));
+  assert.equal(created.status, 201);
+  context.advance(10 * 60 * 1000 + 1);
+  const expired = await api(context, '/api/dispatches/dispatch-expire/accept', { method: 'POST', token: bob.token, body: { runId: 'run-b' } });
+  assert.equal(expired.status, 409);
+  const current = await api(context, '/api/dispatches/dispatch-expire', { token: alice.token });
+  assert.equal(current.body.dispatch.status, 'expired');
+  const tooLarge = await createDispatch(context, alice, dispatchBody('dispatch-large', project.id, 'bob-device', { goal: '字'.repeat(7_000) }));
+  assert.equal(tooLarge.status, 413);
+});
+
+test('SSE 有 presence、只送目標、可依 since 補送', async () => {
+  const context = await start();
+  const { alice, bob, project } = await sharedFixture(context);
+  const aStream = await fetch(`${context.baseUrl}/api/stream?deviceId=alice-device`, { headers: { Authorization: `Bearer ${alice.token}` } });
+  assert.equal(aStream.status, 200);
+  const aReader = aStream.body.getReader();
+  const bStream = await fetch(`${context.baseUrl}/api/stream?deviceId=bob-device`, { headers: { Authorization: `Bearer ${bob.token}` } });
+  assert.equal(bStream.headers.get('content-type')?.startsWith('text/event-stream'), true);
+  assert.equal(bStream.headers.get('x-accel-buffering'), 'no');
+  const presence = await readSseUntil(aReader, (event) => event.type === 'device_presence' && event.payload.deviceId === 'bob-device' && event.payload.online === true);
+  assert.equal(presence.payload.online, true);
+
+  const bReader = bStream.body.getReader();
+  const created = await createDispatch(context, alice, dispatchBody('dispatch-sse', project.id, 'bob-device'));
+  assert.equal(created.status, 201);
+  const createdEvent = await readSseUntil(bReader, (event) => event.type === 'dispatch_created' && event.payload.dispatch.id === 'dispatch-sse');
+  await bReader.cancel();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal((await api(context, '/api/dispatches/dispatch-sse/cancel', { method: 'POST', token: alice.token, body: {} })).status, 200);
+
+  const replay = await fetch(`${context.baseUrl}/api/stream?deviceId=bob-device&since=${createdEvent.seq}`, { headers: { Authorization: `Bearer ${bob.token}` } });
+  const replayReader = replay.body.getReader();
+  const update = await readSseUntil(replayReader, (event) => event.type === 'dispatch_update' && event.payload.dispatch.id === 'dispatch-sse');
+  assert.equal(update.payload.dispatch.status, 'cancelled');
+  await replayReader.cancel();
+  await aReader.cancel();
+});
+
+test('派工與 auth 限流、CORS 精確來源都可驗證', async () => {
+  const context = await start({ websiteOrigins: 'https://app.cuemesh.test', rateLimits: { authMax: 3, dispatchMax: 30 } });
+  const extensionOrigin = 'chrome-extension://abcdefghijklmnopabcdefghijklmnop';
+  const preflight = await api(context, '/api/me', {
+    method: 'OPTIONS', headers: { Origin: extensionOrigin, 'Access-Control-Request-Method': 'GET' },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.response.headers.get('access-control-allow-origin'), extensionOrigin);
+  const website = await api(context, '/api/me', { headers: { Origin: 'https://app.cuemesh.test' } });
+  assert.equal(website.response.headers.get('access-control-allow-origin'), 'https://app.cuemesh.test');
+  const blocked = await api(context, '/api/me', { method: 'OPTIONS', headers: { Origin: 'https://evil.example', 'Access-Control-Request-Method': 'GET' } });
+  assert.equal(blocked.status, 403);
+
+  const { alice, project } = await (async () => {
+    const alice = await register(context, 'alice@example.test', 'Alice');
+    await putDevice(context, alice, 'alice-device');
+    const project = await createProject(context, alice);
+    return { alice, project };
+  })();
+  for (let index = 0; index < 30; index += 1) {
+    const result = await createDispatch(context, alice, dispatchBody(`rate-${index}`, project.id, 'alice-device'));
+    assert.equal(result.status, 201, result.text);
+  }
+  const limited = await createDispatch(context, alice, dispatchBody('rate-over', project.id, 'alice-device'));
+  assert.equal(limited.status, 429);
+
+  await register(context, 'rate-b@example.test', 'Rate B');
+  await register(context, 'rate-c@example.test', 'Rate C');
+  const authLimited = await api(context, '/api/auth/register', {
+    method: 'POST', body: { email: 'rate-over@example.test', password: 'correct horse battery', displayName: 'Rate Over' },
+  });
+  assert.equal(authLimited.status, 429);
+});
+
+
+// ---------- 改成非同步後才會出現的競爭條件 ----------
+const statuses = (results) => results.map((r) => r.status).sort();
+
+test('並行：同時接受與取消派工，最終狀態和回應一定一致', async () => {
+  const context = await start({ rateLimits: { authMax: 100, dispatchMax: 1000, windowMs: 60_000 } });
+  const { alice, bob, project } = await sharedFixture(context);
+  const accepts = await Promise.all(Array.from({ length: 10 }, async (_, i) => {
+    const id = `race-${i}`;
+    assert.equal((await createDispatch(context, alice, dispatchBody(id, project.id, 'bob-device'))).status, 201);
+    const [accept, cancel] = await Promise.all([
+      api(context, `/api/dispatches/${id}/accept`, { method: 'POST', token: bob.token, body: { runId: `run-${i}` } }),
+      api(context, `/api/dispatches/${id}/cancel`, { method: 'POST', token: alice.token }),
+    ]);
+    const final = (await api(context, `/api/dispatches/${id}`, { token: alice.token })).body.dispatch;
+    // 先接受再取消是合法順序；但取消成功就一定是 cancelled，取消失敗就一定是 accepted，
+    // 而且兩個都被拒絕是不可能的。
+    assert.ok(accept.status === 200 || cancel.status === 200, `${accept.text} | ${cancel.text}`);
+    assert.equal(final.status, cancel.status === 200 ? 'cancelled' : 'accepted', `第 ${i} 輪`);
+    return accept.status;
+  }));
+  assert.ok(accepts.length === 10);
+});
+
+test('並行：同一筆派工同時回報，只有第一個算數', async () => {
+  const context = await start({ rateLimits: { authMax: 100, dispatchMax: 1000, windowMs: 60_000 } });
+  const { alice, bob, project } = await sharedFixture(context);
+  assert.equal((await createDispatch(context, alice, dispatchBody('r1', project.id, 'bob-device'))).status, 201);
+  await createRun(context, bob, { id: 'bob-run', projectId: project.id, deviceId: 'bob-device' });
+  assert.equal((await api(context, '/api/dispatches/r1/accept', { method: 'POST', token: bob.token, body: { runId: 'bob-run' } })).status, 200);
+  const reports = await Promise.all(['done', 'failed', 'partial'].map((status) => api(context, '/api/dispatches/r1/report', { method: 'POST', token: bob.token, body: { status, runId: 'bob-run', summary: status } })));
+  assert.deepEqual(statuses(reports), [200, 409, 409]);
+});
+
+test('並行：邀請碼只能用一次', async () => {
+  const context = await start({ rateLimits: { authMax: 100, dispatchMax: 100, windowMs: 60_000 } });
+  const alice = await register(context, 'alice@example.test', 'Alice');
+  const others = await Promise.all(['b', 'c', 'd', 'e'].map((n) => register(context, `${n}@example.test`, n)));
+  const project = await createProject(context, alice);
+  const invite = await api(context, `/api/projects/${project.id}/invites`, { method: 'POST', token: alice.token, body: {} });
+  const results = await Promise.all(others.map((u) => api(context, '/api/invites/accept', { method: 'POST', token: u.token, body: { code: invite.body.code } })));
+  assert.deepEqual(statuses(results), [200, 404, 404, 404]);
+  const members = await api(context, `/api/projects/${project.id}/members`, { token: alice.token });
+  assert.equal(members.body.members.length, 2);
+});
+
+test('並行：保險箱同版本同時寫入只能一個成功', async () => {
+  const context = await start();
+  const alice = await register(context, 'alice@example.test', 'Alice');
+  const vault = (c) => ({ expectedVersion: 0, kdf: { name: 'PBKDF2', hash: 'SHA-256', iterations: 600000 }, salt: 'c2FsdA==', iv: 'aXY=', ciphertext: c });
+  const results = await Promise.all(['QUFB', 'QkJC', 'Q0ND', 'REREA'.slice(0, 4)].map((c) => api(context, '/api/vault', { method: 'PUT', token: alice.token, body: vault(c) })));
+  assert.deepEqual(statuses(results), [200, 409, 409, 409]);
+  const stored = await api(context, '/api/vault', { token: alice.token });
+  assert.equal(stored.body.vault.version, 1);
+});
+
+test('並行：事件、訊息、派工 ID 重複都能安全去重', async () => {
+  const context = await start({ rateLimits: { authMax: 100, dispatchMax: 1000, windowMs: 60_000 } });
+  const { alice, bob, project } = await sharedFixture(context);
+  await createRun(context, alice, { id: 'run-a', projectId: project.id, deviceId: 'alice-device' });
+  const events = { events: [1, 2, 3].map((seq) => ({ seq, type: 'notice', payload: { text: 't' }, createdAt: 1 })) };
+  const posted = await Promise.all([1, 2, 3, 4].map(() => api(context, '/api/runs/run-a/events', { method: 'POST', token: alice.token, body: events })));
+  assert.ok(posted.every((r) => r.status === 200), posted.map((r) => r.text).join());
+  assert.equal(posted.reduce((sum, r) => sum + r.body.accepted, 0), 3);
+
+  const dup = await Promise.all([1, 2, 3].map(() => createDispatch(context, alice, dispatchBody('same-id', project.id, 'bob-device'))));
+  assert.deepEqual(statuses(dup), [201, 409, 409]);
+
+  assert.equal((await api(context, '/api/dispatches/same-id/accept', { method: 'POST', token: bob.token, body: { runId: 'r' } })).status, 200);
+  const msg = { id: 'm1', kind: 'question', text: '問題' };
+  const sent = await Promise.all([1, 2, 3].map(() => api(context, '/api/dispatches/same-id/messages', { method: 'POST', token: bob.token, body: msg })));
+  assert.ok(sent.every((r) => r.status === 201), sent.map((r) => r.text).join());
+  const detail = await api(context, '/api/dispatches/same-id', { token: alice.token });
+  assert.equal(detail.body.messages.length, 1);
+});
+
+test('並行：移除成員與建立派工同時發生，不會留下被移除者的進行中派工', async () => {
+  const context = await start({ rateLimits: { authMax: 100, dispatchMax: 1000, windowMs: 60_000 } });
+  const { alice, bob, project } = await sharedFixture(context);
+  const results = await Promise.all([
+    ...[1, 2, 3, 4, 5].map((i) => createDispatch(context, alice, dispatchBody(`m-${i}`, project.id, 'bob-device'))),
+    api(context, `/api/projects/${project.id}/members/${bob.user.id}`, { method: 'DELETE', token: alice.token }),
+  ]);
+  assert.equal(results.at(-1).status, 204);
+  const list = await api(context, '/api/dispatches?role=outgoing', { token: alice.token });
+  const active = list.body.dispatches.filter((d) => ['pending', 'accepted'].includes(d.status));
+  assert.deepEqual(active.map((d) => d.id), []);
+  assert.equal((await api(context, `/api/projects/${project.id}`, { method: 'PUT', token: bob.token, body: { name: 'x', description: '' } })).status, 404);
+});
+
+test('SSE：併發事件序號嚴格遞增、補送不漏，也不洩漏其他裝置 ID', async () => {
+  const context = await start({ rateLimits: { authMax: 100, dispatchMax: 1000, windowMs: 60_000 } });
+  const { alice, project } = await sharedFixture(context);
+  await Promise.all(Array.from({ length: 12 }, (_, i) => createDispatch(context, alice, dispatchBody(`s-${i}`, project.id, 'bob-device'))));
+  const bob = await api(context, '/api/auth/login', { method: 'POST', body: { email: 'bob@example.test', password: 'correct horse battery' } });
+  const controller = new AbortController();
+  const response = await fetch(`${context.baseUrl}/api/stream?deviceId=bob-device&since=0`, { headers: { Authorization: `Bearer ${bob.body.token}` }, signal: controller.signal });
+  const reader = response.body.getReader();
+  const seen = [];
+  await readSseUntil(reader, (event) => {
+    if (event.type === 'dispatch_created') seen.push(event);
+    assert.equal('deviceIds' in event, false);
+    return seen.length === 12;
+  }, 4_000);
+  controller.abort();
+  const seqs = seen.map((e) => e.seq);
+  assert.deepEqual(seqs, [...seqs].sort((a, b) => a - b));
+  assert.equal(new Set(seqs).size, 12);
+  assert.equal(typeof seqs[0], 'number');
+});
+
+test('PostgreSQL 的 BIGINT 與費用回傳成數字，符合 API 契約', async () => {
+  const context = await start();
+  const { alice, project } = await sharedFixture(context);
+  assert.equal(typeof project.createdAt, 'number');
+  const run = await api(context, '/api/runs/r1', { method: 'PUT', token: alice.token, body: { id: 'r1', projectId: project.id, deviceId: 'alice-device', goal: 'g', status: 'done', mode: 'auto', planSummary: '', tasks: [], costUsd: 0.5, inputTokens: 9, outputTokens: 3, createdAt: 1_750_000_000_000 } });
+  assert.equal(run.status, 200, run.text);
+  assert.equal(run.body.run.costUsd, 0.5);
+  assert.equal(run.body.run.inputTokens, 9);
+  assert.equal(run.body.run.createdAt, 1_750_000_000_000);
+  const devices = await api(context, '/api/devices', { token: alice.token });
+  assert.equal(typeof devices.body.devices[0].lastSeenAt, 'number');
+});

@@ -1,5 +1,7 @@
 # CueMesh 模型比較文件
 
+> **2026-11-07 更新：CueMesh 已移除 Gemini，只支援 Anthropic 與 OpenAI，實際路由以 `extension/src/core/catalog.js` 為準。** 本文保留當時的比較紀錄。
+>
 > 查核日期：2026-11-07。所有模型 ID 皆取自官方頁面；查不到的欄位標「未確認」。
 > 重要：Gemini 價格有已公告的調漲（見第二節備註），專題報告引用時請註明日期。
 

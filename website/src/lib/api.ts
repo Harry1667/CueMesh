@@ -55,7 +55,9 @@ export class WebsiteApi {
     if (options.signal?.aborted) controller.abort();
     const timeout = setTimeout(() => controller.abort(), 12000);
     try {
-      const response = await this.transport(this.config.apiBaseUrl + path, {
+      // 瀏覽器的 fetch 不能用物件方法的形式呼叫，否則會拋 Illegal invocation，請求送不出去
+      const transport = this.transport;
+      const response = await transport(this.config.apiBaseUrl + path, {
         ...options,
         signal: controller.signal,
         credentials: 'omit',
