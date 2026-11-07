@@ -6,7 +6,7 @@ Public website: https://cuemesh.looptw.com/workspace. Both extensions must conne
 
 ## Link the two devices
 
-1. Harry supplies both devices with the cloud-enabled extension build. The audited source is `ext/mvp` at `361d413`; fetched main does not include that cloud implementation. Keep both extension side panels open throughout the rehearsal.
+1. Harry supplies both devices with the current cloud-enabled extension build. The audited source was `ext/mvp` at `361d413`; Harry subsequently merged the cloud implementation into main (present at `f410c30`). Older locally loaded builds may still lack it. Keep both extension side panels open throughout the rehearsal.
 2. In each extension's **帳號** page, confirm the same server URL and sign in. Name the devices clearly, such as `Ethan-A` and `Harry-B`. Confirm both appear online. Signing in only on the website does not register an execution device.
 3. To demonstrate another person's browser, use two accounts. On A, select the recording project, open **專案成員 → 產生邀請碼**. On B, use **加入別人的專案**, then select that shared project. Both accounts must appear as members. Using one account on two devices demonstrates multi-device access only.
 4. On B, set **是否接受派工 → 每次都問我**. Check B appears in A's **在哪裡執行** list. Each execution device needs its own working provider configuration; website sign-in does not transfer API keys.

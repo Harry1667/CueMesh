@@ -5,7 +5,7 @@ Frontend checks plus a bounded public-site and extension-source audit. This is n
 ## Automated checks
 
 - TypeScript strict check: passed.
-- Vitest: 29 tests passed across contracts/API behavior and locale/model configuration.
+- Vitest: 30 tests passed across contracts/API behavior and locale/model configuration, including the upstream browser-fetch receiver regression test.
 - Generated OpenAPI and ten fixtures match source.
 - Production Vite build: passed; page and translation chunks are split.
 - Rollup reported two annotation-position warnings in Zod dependency comments; build succeeded.
@@ -30,13 +30,13 @@ No physical iPhone, Android or iPad, Safari/WebKit session, screen-reader audit 
 
 ## Integration boundaries
 
-The initial frontend checkout contained API documents without the server implementation. The recording audit subsequently inspected `ext/mvp` at `361d413f1fe18dd5463db7aeab419c41e0f3637b`, which includes server and cross-device code. Fetched main `bda3a7043921026e0135a645cd5f8b42efc1ce6c` does not yet contain that cloud implementation.
+The initial frontend checkout contained API documents without the server implementation. The recording audit subsequently inspected `ext/mvp` at `361d413f1fe18dd5463db7aeab419c41e0f3637b`, which includes server and cross-device code. During the audit Harry merged that implementation and website PR #2 into main. This branch incorporates main `f410c30`, including his fix for calling browser fetch without a class-instance receiver. The checks below distinguish the isolated extension audit from the current frontend.
 
 Real registration/login, two-account invitation/message flows, real extension ingestion and provider calls have not been verified. Automated API tests use controlled responses. The user reports that the two recording devices are not yet linked.
 
 ## Recording audit
 
-- Re-ran strict type checking, all 29 frontend tests, generated-contract consistency, formatting and the production build. All passed.
+- Re-ran strict type checking, all 30 frontend tests after incorporating main, generated-contract consistency, formatting and the production build. All passed.
 - Fixed Vite's API target: the earlier local port 8000 was unavailable. Development and production preview now proxy to the extension's deployed default, `https://cuemesh.looptw.com`, with `CUEMESH_API_TARGET` as a local-server override.
 - Matched the registration display-name limit to the actual server: 80 characters in both the input and request schema. Regenerated OpenAPI.
 - Public HTTPS root returned 200. `/workspace` rendered the live sign-in screen with no captured console errors. The deployed commit and full authenticated flows were not established.

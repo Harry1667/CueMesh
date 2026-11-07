@@ -11,4 +11,4 @@
 
 2026-11-07 錄影前查核：公開 `/api/me` 回傳預期 JSON 401，對 `http://127.0.0.1:4180` 的 CORS 預檢回傳 204 與相符 origin。Vite 的開發與預覽 proxy 已改接上述公開 API；本機後端可用 `CUEMESH_API_TARGET=http://127.0.0.1:3000` 覆寫。這不是登入成功或跨裝置成功的證據。
 
-後端／擴充功能已檢視 `ext/mvp` commit `361d413`。236 個 browser/core/cloud/UI 測試通過，使用模擬 provider；未跑真實金鑰、資料庫或兩台裝置。兩台裝置目前尚未連結完成。請依 [DEMO-RECORDING.md](DEMO-RECORDING.md) 確認同一伺服器、共享專案、雙方在線、同意與回報，再錄完整 demo。網站修正與查核記錄放在 [PR #2](https://github.com/Harry1667/CueMesh/pull/2)。
+後端／擴充功能已檢視 `ext/mvp` commit `361d413`。236 個 browser/core/cloud/UI 測試通過，使用模擬 provider；未跑真實金鑰、資料庫或兩台裝置。Harry 隨後已將雲端功能和 [網站 PR #2](https://github.com/Harry1667/CueMesh/pull/2) 合併至 main；前端分支已納入 main `f410c30` 及瀏覽器 fetch 修正。本次連線修正與查核文件由 `web/cuemesh-experience` 的後續 PR 提交。兩台裝置目前尚未連結完成。請依 [DEMO-RECORDING.md](DEMO-RECORDING.md) 確認同一伺服器、共享專案、雙方在線、同意與回報，再錄完整 demo。
