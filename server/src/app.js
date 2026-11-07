@@ -30,7 +30,7 @@ function userJson(row) {
 }
 
 function projectJson(row) {
-  return { id: row.id, name: row.name, description: row.description, createdAt: row.created_at, ...(row.role ? { role: row.role } : {}) };
+  return { id: row.id, name: row.name, description: row.description, createdAt: row.created_at, ...(row.member_count != null ? { memberCount: Number(row.member_count) } : {}), ...(row.role ? { role: row.role } : {}) };
 }
 
 function deviceJson(row, online, currentUserId) {
@@ -299,7 +299,8 @@ export async function createApp(options = {}) {
 
   async function getMemberProject(projectId, userId, forUpdate = false) {
     return database.one(sql(
-      'SELECT p.*, pm.role FROM projects p JOIN project_members pm ON pm.project_id = p.id',
+      'SELECT p.*, pm.role, (SELECT count(*)::int FROM project_members m WHERE m.project_id = p.id) AS member_count',
+      'FROM projects p JOIN project_members pm ON pm.project_id = p.id',
       'WHERE p.id = $1 AND pm.user_id = $2',
       forUpdate ? 'FOR UPDATE OF p, pm' : '',
     ), [projectId, userId]);
@@ -713,7 +714,8 @@ export async function createApp(options = {}) {
 
   app.get('/api/projects', authenticate, asyncRoute(async (request, response) => {
     const rows = await database.many(sql(
-      'SELECT p.*, pm.role FROM projects p JOIN project_members pm ON pm.project_id = p.id',
+      'SELECT p.*, pm.role, (SELECT count(*)::int FROM project_members m WHERE m.project_id = p.id) AS member_count',
+      'FROM projects p JOIN project_members pm ON pm.project_id = p.id',
       'WHERE pm.user_id = $1 ORDER BY p.updated_at DESC',
     ), [request.user.id]);
     response.json({ projects: rows.map(projectJson) });
